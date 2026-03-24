@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 authors = [
-    { name = "Łukasz", email = "lukasz@liske.cloud" },
+    { name = "Łukasz" },
 ]
 keywords = ["xtb", "xstation5", "trading", "websocket", "api"]
 classifiers = [
