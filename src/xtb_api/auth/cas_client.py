@@ -116,9 +116,12 @@ class CASClient:
             )
 
         # Handle 2FA required
-        if result.get("loginPhase") == "TWO_FACTOR_REQUIRED" and result.get("sessionId"):
+        login_ticket = result.get("loginTicket") or result.get("sessionId") or ""
+        if result.get("loginPhase") == "TWO_FACTOR_REQUIRED" and login_ticket:
             return CASLoginTwoFactorRequired(
-                session_id=result["sessionId"],
+                login_ticket=login_ticket,
+                session_id=result.get("sessionId", login_ticket),
+                two_factor_auth_type=result.get("twoFactorAuthType", "SMS"),
                 methods=result.get("methods", ["TOTP"]),
                 expires_at=time.time() + 5 * 60,  # 5 minutes
             )
@@ -187,12 +190,27 @@ class CASClient:
                     f"CAS v1 login failed: {resp.status} {error_text}",
                 )
 
-    async def login_with_two_factor(self, session_id: str, code: str) -> CASLoginResult:
+    async def login_with_two_factor(
+        self,
+        login_ticket: str,
+        code: str,
+        two_factor_auth_type: str = "SMS",
+        *,
+        session_id: str | None = None,
+    ) -> CASLoginResult:
         """Submit two-factor authentication code to complete login.
 
+        Uses the same ``v2/tickets`` endpoint as initial login, with a
+        ``loginTicket`` + ``token`` payload — matching the real browser flow.
+
         Args:
-            session_id: Session ID from initial login response
+            login_ticket: Login ticket from initial login (MID-xxx format).
+                          For backward compat, ``session_id`` kwarg is also accepted
+                          and used as login_ticket if this arg is empty.
             code: OTP code (6 digits from TOTP/SMS/EMAIL)
+            two_factor_auth_type: Auth method, default ``"SMS"``
+            session_id: **Deprecated** — alias for ``login_ticket``, kept for
+                        backward compatibility.
 
         Returns:
             TGT if successful, or new 2FA challenge
@@ -200,16 +218,23 @@ class CASClient:
         Raises:
             CASError: If code is invalid, rate limited, or account blocked
         """
-        url = f"{self._config.base_url}v2/tickets/two-factor"
+        # Backward compat: accept session_id as login_ticket
+        ticket = login_ticket or session_id or ""
+        if not ticket:
+            raise CASError("CAS_2FA_MISSING_TICKET", "No login ticket provided")
+
+        url = f"{self._config.base_url}v2/tickets"
 
         payload = {
-            "sessionId": session_id,
-            "code": code,
+            "loginTicket": ticket,
+            "token": code,
+            "fingerprint": self._generate_fingerprint(self._config.user_agent),
+            "twoFactorAuthType": two_factor_auth_type,
         }
 
         headers = {
-            "Content-Type": "application/json",
-            "Time-Zone": self._config.timezone_offset or "+0000",
+            "Content-Type": "application/json;charset=UTF-8",
+            "Time-Zone": self._config.timezone_offset or "0",
             "User-Agent": self._config.user_agent,
         }
 
@@ -224,9 +249,27 @@ class CASClient:
 
                 result = await resp.json()
 
-        if result.get("loginPhase") == "TGT_CREATED" and result.get("ticket"):
+                # Extract TGT from response body or Set-Cookie header
+                tgt = result.get("ticket") or result.get("tgt")
+                if not tgt:
+                    # Try Set-Cookie: CASTGT=TGT-xxx; ...
+                    set_cookie = resp.headers.get("Set-Cookie", "")
+                    for part in set_cookie.split(";"):
+                        part = part.strip()
+                        if part.startswith("CASTGT="):
+                            tgt = part[len("CASTGT="):]
+                            break
+
+        if result.get("loginPhase") == "TGT_CREATED" and tgt:
             return CASLoginSuccess(
-                tgt=result["ticket"],
+                tgt=tgt,
+                expires_at=time.time() + 8 * 3600,
+            )
+
+        # Some responses return TGT without explicit loginPhase
+        if tgt and tgt.startswith("TGT-"):
+            return CASLoginSuccess(
+                tgt=tgt,
                 expires_at=time.time() + 8 * 3600,
             )
 
@@ -359,14 +402,15 @@ class CASClient:
 
     @staticmethod
     def _get_timezone_offset() -> str:
-        """Get current timezone offset in ±HHMM format."""
+        """Get current timezone offset in minutes (matching browser's format).
+
+        The XTB signon API expects the Time-Zone header as positive minutes
+        east of UTC (e.g. "60" for CET/UTC+1, "120" for CEST/UTC+2).
+        This matches ``new Date().getTimezoneOffset()`` negated.
+        """
         now = datetime.now(timezone.utc).astimezone()
         offset_seconds = now.utcoffset().total_seconds() if now.utcoffset() else 0
-        sign = "+" if offset_seconds >= 0 else "-"
-        abs_offset = abs(int(offset_seconds))
-        hours = abs_offset // 3600
-        minutes = (abs_offset % 3600) // 60
-        return f"{sign}{hours:02d}{minutes:02d}"
+        return str(int(offset_seconds / 60))
 
     @staticmethod
     def _generate_fingerprint(user_agent: str) -> str:

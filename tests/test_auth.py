@@ -47,10 +47,11 @@ class TestCASClient:
         assert len(fp) == 64
 
     def test_get_timezone_offset_format(self):
+        """Timezone offset should be minutes as a string (e.g. '60', '-300')."""
         offset = CASClient._get_timezone_offset()
-        assert len(offset) == 5
-        assert offset[0] in ("+", "-")
-        assert offset[1:].isdigit()
+        # Should be a valid integer string (positive or negative or zero)
+        int_val = int(offset)
+        assert -720 <= int_val <= 840  # valid UTC offset range in minutes
 
     def test_is_tgt_valid_success(self):
         client = CASClient()
@@ -70,7 +71,10 @@ class TestCASClient:
     def test_get_tgt_from_result_2fa(self):
         client = CASClient()
         result = CASLoginTwoFactorRequired(
-            session_id="sess-123", methods=["TOTP"], expires_at=time.time() + 300
+            login_ticket="MID-123--abc",
+            session_id="sess-123",
+            methods=["TOTP"],
+            expires_at=time.time() + 300,
         )
         assert client.get_tgt_from_result(result) is None
 
@@ -105,6 +109,7 @@ class TestCASClient:
         mock_response.status = 200
         mock_response.json = AsyncMock(return_value={
             "loginPhase": "TWO_FACTOR_REQUIRED",
+            "loginTicket": "MID-103490--WTXBAs-zX7JSOBuAF0tVCsDJ6cHIvZQ",
             "sessionId": "sess-abc-123",
             "methods": ["TOTP", "SMS"],
         })
@@ -116,9 +121,33 @@ class TestCASClient:
             result = await client._login_v2("test@example.com", "password123")
 
         assert isinstance(result, CASLoginTwoFactorRequired)
+        assert result.login_ticket == "MID-103490--WTXBAs-zX7JSOBuAF0tVCsDJ6cHIvZQ"
         assert result.session_id == "sess-abc-123"
         assert "TOTP" in result.methods
         assert "SMS" in result.methods
+
+    @pytest.mark.asyncio
+    async def test_login_v2_requires_2fa_no_session_id(self):
+        """When server only returns loginTicket (no sessionId), it should still work."""
+        client = CASClient()
+
+        mock_response = AsyncMock()
+        mock_response.ok = True
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={
+            "loginPhase": "TWO_FACTOR_REQUIRED",
+            "loginTicket": "MID-103490--WTXBAs-abc123",
+        })
+
+        mock_session = AsyncMock()
+        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+
+        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
+            result = await client._login_v2("test@example.com", "password123")
+
+        assert isinstance(result, CASLoginTwoFactorRequired)
+        assert result.login_ticket == "MID-103490--WTXBAs-abc123"
+        assert result.session_id == "MID-103490--WTXBAs-abc123"  # fallback
 
     @pytest.mark.asyncio
     async def test_login_v2_unauthorized(self):
@@ -191,6 +220,91 @@ class TestCASClient:
                 await client.get_service_ticket("TGT-xxx", "xapi5")
 
         assert exc_info.value.code == "CAS_INVALID_SERVICE_TICKET"
+
+
+    @pytest.mark.asyncio
+    async def test_login_with_two_factor_success(self):
+        """2FA submission should POST to v2/tickets with loginTicket payload."""
+        client = CASClient()
+
+        mock_response = AsyncMock()
+        mock_response.ok = True
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={
+            "loginPhase": "TGT_CREATED",
+            "ticket": "TGT-1272906-WIAQgUAiVFSMHGI0jGxYhwU1RU10MGFf9pNprXtwwU",
+        })
+        mock_response.headers = {"Set-Cookie": ""}
+
+        mock_session = AsyncMock()
+        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+
+        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
+            result = await client.login_with_two_factor(
+                "MID-103490--WTXBAs-zX7JSOBuAF0tVCsDJ6cHIvZQ",
+                "654321",
+            )
+
+        assert isinstance(result, CASLoginSuccess)
+        assert result.tgt == "TGT-1272906-WIAQgUAiVFSMHGI0jGxYhwU1RU10MGFf9pNprXtwwU"
+
+        # Verify the correct URL and payload were used
+        call_args = mock_session.post.call_args
+        assert "v2/tickets" in call_args[0][0]
+        assert "two-factor" not in call_args[0][0]
+        payload = call_args[1]["json"]
+        assert payload["loginTicket"] == "MID-103490--WTXBAs-zX7JSOBuAF0tVCsDJ6cHIvZQ"
+        assert payload["token"] == "654321"
+        assert payload["twoFactorAuthType"] == "SMS"
+        assert "fingerprint" in payload
+
+    @pytest.mark.asyncio
+    async def test_login_with_two_factor_tgt_from_cookie(self):
+        """Should extract TGT from Set-Cookie header if not in JSON body."""
+        client = CASClient()
+
+        mock_response = AsyncMock()
+        mock_response.ok = True
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={"loginPhase": "TGT_CREATED"})
+        mock_response.headers = {
+            "Set-Cookie": "CASTGT=TGT-999-fromcookie; Path=/; HttpOnly"
+        }
+
+        mock_session = AsyncMock()
+        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+
+        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
+            result = await client.login_with_two_factor("MID-123--abc", "123456")
+
+        assert isinstance(result, CASLoginSuccess)
+        assert result.tgt == "TGT-999-fromcookie"
+
+    @pytest.mark.asyncio
+    async def test_login_with_two_factor_backward_compat(self):
+        """session_id kwarg should work as alias for login_ticket."""
+        client = CASClient()
+
+        mock_response = AsyncMock()
+        mock_response.ok = True
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={
+            "loginPhase": "TGT_CREATED",
+            "ticket": "TGT-compat-test",
+        })
+        mock_response.headers = {"Set-Cookie": ""}
+
+        mock_session = AsyncMock()
+        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+
+        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
+            result = await client.login_with_two_factor(
+                "", "654321", session_id="old-session-id"
+            )
+
+        assert isinstance(result, CASLoginSuccess)
+        payload = mock_session.post.call_args[1]["json"]
+        assert payload["loginTicket"] == "old-session-id"
 
 
 class AsyncContextManager:

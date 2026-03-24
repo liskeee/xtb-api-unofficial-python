@@ -204,7 +204,9 @@ class XTBWebSocketClient:
                 self._emit(
                     "requires_2fa",
                     {
-                        "session_id": login_result.session_id,
+                        "login_ticket": login_result.login_ticket,
+                        "session_id": login_result.session_id,  # backward compat
+                        "two_factor_auth_type": login_result.two_factor_auth_type,
                         "methods": login_result.methods,
                         "expires_at": login_result.expires_at,
                     },
@@ -414,12 +416,22 @@ class XTBWebSocketClient:
         self._emit("authenticated", self._login_result)
         return self._login_result
 
-    async def submit_two_factor_code(self, session_id: str, code: str) -> None:
+    async def submit_two_factor_code(
+        self,
+        login_ticket: str,
+        code: str,
+        two_factor_auth_type: str = "SMS",
+        *,
+        session_id: str | None = None,
+    ) -> None:
         """Submit 2FA code to complete login.
 
         Args:
-            session_id: Session ID from 'requires_2fa' event
+            login_ticket: Login ticket from 'requires_2fa' event (MID-xxx).
+                          For backward compat, ``session_id`` kwarg is also accepted.
             code: 6-digit OTP code
+            two_factor_auth_type: Auth method, default ``"SMS"``
+            session_id: **Deprecated** — alias for ``login_ticket``
 
         Raises:
             RuntimeError: If CAS client not available
@@ -427,13 +439,18 @@ class XTBWebSocketClient:
         if not self._cas_client:
             raise RuntimeError("No CAS client available - authentication not started")
 
-        two_factor_result = await self._cas_client.login_with_two_factor(session_id, code)
+        ticket = login_ticket or session_id or ""
+        two_factor_result = await self._cas_client.login_with_two_factor(
+            ticket, code, two_factor_auth_type
+        )
 
         if isinstance(two_factor_result, CASLoginTwoFactorRequired):
             self._emit(
                 "requires_2fa",
                 {
+                    "login_ticket": two_factor_result.login_ticket,
                     "session_id": two_factor_result.session_id,
+                    "two_factor_auth_type": two_factor_result.two_factor_auth_type,
                     "methods": two_factor_result.methods,
                     "expires_at": two_factor_result.expires_at,
                 },

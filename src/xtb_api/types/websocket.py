@@ -134,7 +134,9 @@ class CASLoginSuccess(BaseModel):
 class CASLoginTwoFactorRequired(BaseModel):
     """CAS login requiring two-factor authentication."""
     type: Literal["requires_2fa"] = "requires_2fa"
-    session_id: str
+    login_ticket: str
+    session_id: str = ""  # backward compat (may be same as login_ticket or empty)
+    two_factor_auth_type: str = "SMS"
     methods: list[str] = ["TOTP"]
     expires_at: float
 
