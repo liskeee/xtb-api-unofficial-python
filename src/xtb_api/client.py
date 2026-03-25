@@ -13,12 +13,20 @@ from typing import Literal
 from pydantic import BaseModel
 
 from xtb_api.browser.browser_client import BrowserClientConfig, XTBBrowserClient
+from xtb_api.grpc.client import GrpcClient
 from xtb_api.types.instrument import InstrumentSearchResult, Quote
 from xtb_api.types.trading import AccountBalance, Position, TradeOptions, TradeResult
 from xtb_api.types.websocket import WSAuthOptions, WSClientConfig
 from xtb_api.ws.ws_client import XTBWebSocketClient
 
-ClientMode = Literal["browser", "websocket"]
+ClientMode = Literal["browser", "websocket", "grpc"]
+
+
+class GrpcClientConfig(BaseModel):
+    """gRPC-web client configuration."""
+    cdp_url: str = "http://localhost:18800"
+    account_number: str = "51984891"
+    account_server: str = "XS-real1"
 
 
 class XTBClientConfig(BaseModel):
@@ -26,6 +34,7 @@ class XTBClientConfig(BaseModel):
     mode: ClientMode
     browser: BrowserClientConfig | None = None
     websocket: WSClientConfig | None = None
+    grpc: GrpcClientConfig | None = None
     auth: WSAuthOptions | None = None
 
 
@@ -47,11 +56,19 @@ class XTBClient:
         self._mode = config.mode
         self._browser_client: XTBBrowserClient | None = None
         self._ws_client: XTBWebSocketClient | None = None
+        self._grpc_client: GrpcClient | None = None
 
         if config.mode == "browser":
             if not config.browser:
                 raise ValueError("browser config required for browser mode")
             self._browser_client = XTBBrowserClient(config.browser)
+        elif config.mode == "grpc":
+            grpc_cfg = config.grpc or GrpcClientConfig()
+            self._grpc_client = GrpcClient(
+                cdp_url=grpc_cfg.cdp_url,
+                account_number=grpc_cfg.account_number,
+                account_server=grpc_cfg.account_server,
+            )
         else:
             if not config.websocket:
                 raise ValueError("websocket config required for websocket mode")
@@ -158,6 +175,25 @@ class XTBClient:
             return await self._browser_client.get_account_number()
         return self._ws_client.get_account_number()
 
+    @classmethod
+    def grpc(
+        cls,
+        cdp_url: str = "http://localhost:18800",
+        account_number: str = "51984891",
+        account_server: str = "XS-real1",
+    ) -> XTBClient:
+        """Create a gRPC-web mode client instance."""
+        return cls(
+            XTBClientConfig(
+                mode="grpc",
+                grpc=GrpcClientConfig(
+                    cdp_url=cdp_url,
+                    account_number=account_number,
+                    account_server=account_server,
+                ),
+            )
+        )
+
     @property
     def ws(self) -> XTBWebSocketClient | None:
         """Get the underlying WebSocket client (only in WebSocket mode)."""
@@ -167,3 +203,8 @@ class XTBClient:
     def browser(self) -> XTBBrowserClient | None:
         """Get the underlying Browser client (only in browser mode)."""
         return self._browser_client
+
+    @property
+    def grpc_client(self) -> GrpcClient | None:
+        """Get the underlying gRPC client (only in gRPC mode)."""
+        return self._grpc_client

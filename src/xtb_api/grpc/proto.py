@@ -1,0 +1,217 @@
+"""Minimal protobuf encoder/decoder for XTB gRPC-web protocol.
+
+No external dependencies — manual varint/length-delimited encoding
+matching the wire format observed in HAR captures from xStation5.
+"""
+
+from __future__ import annotations
+
+import base64
+import re
+import struct
+
+
+def encode_varint(value: int) -> bytes:
+    """Encode an unsigned integer as a protobuf varint."""
+    parts: list[int] = []
+    while value > 0x7F:
+        parts.append((value & 0x7F) | 0x80)
+        value >>= 7
+    parts.append(value & 0x7F)
+    return bytes(parts)
+
+
+def decode_varint(data: bytes, pos: int = 0) -> tuple[int, int]:
+    """Decode a varint at position. Returns (value, new_pos)."""
+    result = 0
+    shift = 0
+    while pos < len(data):
+        byte = data[pos]
+        result |= (byte & 0x7F) << shift
+        pos += 1
+        if not (byte & 0x80):
+            return result, pos
+        shift += 7
+    raise ValueError("Truncated varint")
+
+
+def encode_field_varint(field_num: int, value: int) -> bytes:
+    """Encode a varint field (wire type 0)."""
+    tag = (field_num << 3) | 0  # wire type 0 = varint
+    return encode_varint(tag) + encode_varint(value)
+
+
+def encode_field_bytes(field_num: int, data: bytes) -> bytes:
+    """Encode a length-delimited field (wire type 2)."""
+    tag = (field_num << 3) | 2  # wire type 2 = length-delimited
+    return encode_varint(tag) + encode_varint(len(data)) + data
+
+
+def build_new_market_order(instrument_id: int, volume: int, side: int) -> bytes:
+    """Build NewMarketOrder protobuf message.
+
+    Args:
+        instrument_id: gRPC instrument ID (e.g., 9438 for CIG.PL)
+        volume: Number of shares
+        side: 1=BUY, 2=SELL
+
+    Returns:
+        Serialized protobuf bytes
+
+    Wire format (from HAR analysis):
+        Field 1 (varint): instrument_id
+        Field 2 (bytes):  order { Field 2 (bytes): volume { Field 1 (varint): value } }
+        Field 3 (varint): side
+    """
+    # Inner: volume message — field 1 = value
+    volume_msg = encode_field_varint(1, volume)
+    # Middle: order message — field 2 = volume
+    order_msg = encode_field_bytes(2, volume_msg)
+    # Outer: full message
+    return (
+        encode_field_varint(1, instrument_id)
+        + encode_field_bytes(2, order_msg)
+        + encode_field_varint(3, side)
+    )
+
+
+def build_grpc_frame(proto_msg: bytes) -> bytes:
+    """Wrap protobuf message in a gRPC-web frame.
+
+    Frame format: 1 byte flag + 4 bytes big-endian length + payload
+    Flag 0 = data frame (uncompressed)
+    """
+    return struct.pack(">BI", 0, len(proto_msg)) + proto_msg
+
+
+def build_grpc_web_text_body(proto_msg: bytes) -> str:
+    """Build gRPC-web-text body (base64-encoded gRPC frame)."""
+    frame = build_grpc_frame(proto_msg)
+    return base64.b64encode(frame).decode("ascii")
+
+
+def build_create_access_token_request(
+    tgt: str, account_number: str, account_server: str
+) -> bytes:
+    """Build CreateAccessTokenRequest protobuf.
+
+    Proto structure (discovered via proto classes in xStation5):
+      message CreateAccessTokenRequest {
+          string tgt = 1;          // TGT cookie value
+          Account account = 2;     // Account info
+      }
+      message Account {
+          string number = 1;       // e.g. "51984891"
+          string server = 2;       // e.g. "XS-real1"
+      }
+
+    The JWT returned will contain:
+      - pid: person ID
+      - acn: account number (REQUIRED for trading!)
+      - acs: account server (REQUIRED for trading!)
+    """
+    # Build inner Account message
+    account_msg = (
+        encode_field_bytes(1, account_number.encode("utf-8"))
+        + encode_field_bytes(2, account_server.encode("utf-8"))
+    )
+    # Build outer CreateAccessTokenRequest
+    return (
+        encode_field_bytes(1, tgt.encode("utf-8"))
+        + encode_field_bytes(2, account_msg)
+    )
+
+
+def parse_grpc_frames(data: bytes) -> list[bytes]:
+    """Parse one or more gRPC-web frames from response data.
+
+    Returns list of payload bytes (one per frame).
+    """
+    frames: list[bytes] = []
+    pos = 0
+    while pos + 5 <= len(data):
+        _flag = data[pos]
+        length = struct.unpack(">I", data[pos + 1 : pos + 5])[0]
+        pos += 5
+        if pos + length > len(data):
+            break
+        frames.append(data[pos : pos + length])
+        pos += length
+    return frames
+
+
+def parse_proto_fields(data: bytes) -> dict[int, list[tuple[int, bytes | int]]]:
+    """Parse protobuf fields into {field_num: [(wire_type, value), ...]}.
+
+    Wire type 0 → value is int (varint)
+    Wire type 2 → value is bytes (length-delimited)
+    Wire type 5 → value is bytes (4 bytes, fixed32)
+    Wire type 1 → value is bytes (8 bytes, fixed64)
+    """
+    fields: dict[int, list[tuple[int, bytes | int]]] = {}
+    pos = 0
+    while pos < len(data):
+        try:
+            tag, pos = decode_varint(data, pos)
+        except ValueError:
+            break
+        wire_type = tag & 0x07
+        field_num = tag >> 3
+
+        if wire_type == 0:  # varint
+            value, pos = decode_varint(data, pos)
+            fields.setdefault(field_num, []).append((wire_type, value))
+        elif wire_type == 2:  # length-delimited
+            length, pos = decode_varint(data, pos)
+            value_bytes = data[pos : pos + length]
+            pos += length
+            fields.setdefault(field_num, []).append((wire_type, value_bytes))
+        elif wire_type == 5:  # fixed32
+            value_bytes = data[pos : pos + 4]
+            pos += 4
+            fields.setdefault(field_num, []).append((wire_type, value_bytes))
+        elif wire_type == 1:  # fixed64
+            value_bytes = data[pos : pos + 8]
+            pos += 8
+            fields.setdefault(field_num, []).append((wire_type, value_bytes))
+        else:
+            break  # Unknown wire type
+
+    return fields
+
+
+def extract_jwt(data: bytes) -> str | None:
+    """Extract JWT token from gRPC response bytes.
+
+    Searches for the JWT pattern in the raw bytes (works regardless
+    of protobuf nesting level).
+    """
+    text = data.decode("latin-1")
+    match = re.search(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", text)
+    return match.group(0) if match else None
+
+
+# Side constants
+SIDE_BUY = 1
+SIDE_SELL = 2
+
+# Content type for gRPC-web-text (base64 encoded)
+GRPC_WEB_TEXT_CONTENT_TYPE = "application/grpc-web-text"
+
+# gRPC-web endpoints
+GRPC_BASE_URL = "https://ipax.xtb.com"
+GRPC_AUTH_ENDPOINT = (
+    f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.auth.v2.AuthService/CreateAccessToken"
+)
+GRPC_NEW_ORDER_ENDPOINT = (
+    f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.cashtradingneworder.v1"
+    ".CashTradingNewOrderService/NewMarketOrder"
+)
+GRPC_CONFIRM_ENDPOINT = (
+    f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.cashtradingconfirmation.v1"
+    ".CashTradingConfirmationService/SubscribeNewMarketOrderConfirmation"
+)
+GRPC_CLOSE_POSITION_ENDPOINT = (
+    f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.cashtradingneworder.v1"
+    ".CashTradingNewOrderService/CloseSinglePosition"
+)

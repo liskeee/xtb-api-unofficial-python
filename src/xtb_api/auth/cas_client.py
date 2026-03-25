@@ -400,6 +400,59 @@ class CASClient:
             return login_result.tgt
         return None
 
+    async def login_with_browser(
+        self, email: str, password: str, *, headless: bool = True
+    ) -> CASLoginResult:
+        """Login using browser-based authentication (Playwright).
+
+        Bypasses Akamai WAF by using a real browser to perform the login flow.
+        Falls back gracefully if Playwright is not installed.
+
+        Args:
+            email: XTB account email
+            password: XTB account password
+            headless: Run browser in headless mode (default True, set False for debugging)
+
+        Returns:
+            Either success with TGT or 2FA challenge requiring OTP code
+
+        Raises:
+            CASError: If login fails or Playwright not installed
+        """
+        try:
+            from xtb_api.auth.browser_auth import BrowserCASAuth
+        except ImportError:
+            raise CASError(
+                "BROWSER_AUTH_UNAVAILABLE",
+                "Browser auth requires playwright. Install with: pip install playwright && playwright install chromium",
+            )
+
+        self._browser_auth = BrowserCASAuth(headless=headless)
+        return await self._browser_auth.login(email, password)
+
+    async def submit_browser_otp(self, code: str) -> CASLoginResult:
+        """Submit OTP code via browser for 2FA completion.
+
+        Must be called after login_with_browser() returns CASLoginTwoFactorRequired.
+
+        Args:
+            code: 6-digit OTP code
+
+        Returns:
+            CASLoginSuccess with TGT
+
+        Raises:
+            CASError: If browser session not available or OTP fails
+        """
+        if not hasattr(self, "_browser_auth") or self._browser_auth is None:
+            raise CASError(
+                "BROWSER_AUTH_NO_SESSION",
+                "No browser auth session — call login_with_browser() first",
+            )
+        result = await self._browser_auth.submit_otp(code)
+        self._browser_auth = None
+        return result
+
     @staticmethod
     def _get_timezone_offset() -> str:
         """Get current timezone offset in minutes (matching browser's format).

@@ -50,6 +50,7 @@ class WSAuthOptions(BaseModel):
     service_ticket: str | None = None
     tgt: str | None = None
     credentials: WSCredentials | None = None
+    browser_auth: bool = False
 
 
 class WSCredentials(BaseModel):

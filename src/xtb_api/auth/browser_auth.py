@@ -1,0 +1,316 @@
+"""Browser-based CAS authentication for XTB xStation5.
+
+Uses Playwright to bypass Akamai WAF that blocks REST CAS API from datacenter IPs.
+Launches headless Chromium with stealth patches, performs login via the Angular web app,
+and intercepts the TGT from network responses.
+
+Browser is used ONLY for authentication — trading uses WebSocket API.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+
+from xtb_api.types.websocket import (
+    CASError,
+    CASLoginResult,
+    CASLoginSuccess,
+    CASLoginTwoFactorRequired,
+)
+
+logger = logging.getLogger(__name__)
+
+LOGIN_URL = "https://xstation5.xtb.com/"
+PAGE_LOAD_TIMEOUT = 30_000  # 30s
+OTP_WAIT_TIMEOUT = 300  # 5 min
+
+# Anti-detection scripts injected before page load
+_STEALTH_JS = """
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+window.chrome = { runtime: {} };
+const _origQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (p) => (
+    p.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission })
+        : _origQuery(p)
+);
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+Object.defineProperty(navigator, 'languages', { get: () => ['pl-PL', 'pl', 'en-US', 'en'] });
+"""
+
+
+class BrowserCASAuth:
+    """Browser-based CAS authentication using Playwright.
+
+    Launches headless Chromium with stealth patches, fills the login form on
+    xStation5, and intercepts the TGT from CAS network responses.
+    """
+
+    def __init__(self, *, headless: bool = True) -> None:
+        self._headless = headless
+        self._tgt: str | None = None
+        self._tgt_event = asyncio.Event()
+        self._two_factor_detected = asyncio.Event()
+        self._browser = None
+        self._page = None
+        self._playwright = None
+        self._login_ticket: str | None = None
+        self._two_factor_info: dict | None = None
+
+    async def login(self, email: str, password: str) -> CASLoginResult:
+        """Launch browser, navigate to xStation5, fill login form, and submit.
+
+        Returns CASLoginSuccess if TGT obtained directly, or
+        CASLoginTwoFactorRequired if 2FA is needed (call submit_otp() next).
+        """
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            raise CASError(
+                "BROWSER_AUTH_MISSING_DEPENDENCY",
+                "Playwright is required for browser auth. "
+                "Install with: pip install playwright && playwright install chromium",
+            )
+
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(
+            headless=self._headless,
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+        )
+        context = await self._browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            locale="pl-PL",
+            timezone_id="Europe/Warsaw",
+        )
+
+        # Inject stealth scripts before any page loads
+        await context.add_init_script(_STEALTH_JS)
+
+        self._page = await context.new_page()
+
+        # Set up response interceptor for TGT / 2FA
+        self._page.on("response", self._on_response)
+
+        # Navigate to login page
+        logger.info("Navigating to %s", LOGIN_URL)
+        await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT)
+        await self._page.wait_for_selector(
+            'input[name="xslogin"]', state="visible", timeout=PAGE_LOAD_TIMEOUT
+        )
+        logger.info("Login form found")
+
+        # Type credentials with human-like delays (avoids bot detection)
+        await self._page.click('input[name="xslogin"]')
+        await self._page.keyboard.type(email, delay=30)
+        await self._page.click('input[name="xspass"]')
+        await self._page.keyboard.type(password, delay=30)
+
+        await self._page.wait_for_timeout(300)
+
+        # Submit form
+        submit = self._page.locator('input[type="button"].xs-btn-ok-login')
+        if await submit.is_visible(timeout=3000):
+            await submit.click()
+        else:
+            await self._page.press('input[name="xspass"]', "Enter")
+
+        logger.info("Login form submitted")
+
+        # Wait for either TGT or 2FA detection
+        tgt_task = asyncio.create_task(self._tgt_event.wait())
+        two_fa_task = asyncio.create_task(self._two_factor_detected.wait())
+
+        done, pending = await asyncio.wait(
+            {tgt_task, two_fa_task},
+            timeout=PAGE_LOAD_TIMEOUT / 1000,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+
+        if self._tgt:
+            await self.close()
+            return CASLoginSuccess(
+                tgt=self._tgt,
+                expires_at=time.time() + 8 * 3600,
+            )
+
+        if self._two_factor_detected.is_set():
+            info = self._two_factor_info or {}
+            login_ticket = self._login_ticket or "browser-2fa"
+            return CASLoginTwoFactorRequired(
+                login_ticket=login_ticket,
+                session_id=login_ticket,
+                two_factor_auth_type=info.get("twoFactorAuthType", "SMS"),
+                methods=[info.get("twoFactorAuthType", "SMS")],
+                expires_at=time.time() + OTP_WAIT_TIMEOUT,
+            )
+
+        await self.close()
+        raise CASError("BROWSER_AUTH_TIMEOUT", "Login timed out — no TGT or 2FA detected")
+
+    async def submit_otp(self, code: str) -> CASLoginResult:
+        """Fill OTP code into the 2FA form in the browser and wait for TGT.
+
+        The 2FA component is `XS6-TWO-FACTOR-AUTHENTICATION` — a web component
+        with Shadow DOM. We find the OTP input inside the shadow root.
+        """
+        if not self._page:
+            raise CASError("BROWSER_AUTH_NO_PAGE", "Browser page not available — call login() first")
+
+        logger.info("Submitting OTP code via browser")
+
+        # Wait for 2FA web component to become visible
+        await self._page.wait_for_timeout(2000)
+
+        # Try to find OTP input — first in shadow DOM, then regular DOM
+        otp_filled = await self._page.evaluate(
+            """(code) => {
+                // Search in shadow DOM (XS6-TWO-FACTOR-AUTHENTICATION)
+                const tfa = document.querySelector('xs6-two-factor-authentication');
+                if (tfa && tfa.shadowRoot) {
+                    const input = tfa.shadowRoot.querySelector('input[type="tel"], input[type="text"], input[inputmode="numeric"], input');
+                    if (input) {
+                        input.value = code;
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        // Try to find and click submit button
+                        const btn = tfa.shadowRoot.querySelector('button[type="submit"], button');
+                        if (btn) btn.click();
+                        return true;
+                    }
+                }
+                // Fallback: regular DOM
+                const inputs = document.querySelectorAll('input[type="tel"], input[inputmode="numeric"]');
+                for (const inp of inputs) {
+                    if (inp.offsetParent !== null) {  // visible
+                        inp.value = code;
+                        inp.dispatchEvent(new Event('input', { bubbles: true }));
+                        inp.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    }
+                }
+                return false;
+            }""",
+            code,
+        )
+
+        if not otp_filled:
+            # Last resort: maybe the form auto-submits on the v2/tickets 2FA call
+            # which we can do via page.evaluate with fetch
+            logger.info("OTP input not found in DOM, submitting via fetch inside browser context")
+            result = await self._page.evaluate(
+                """async ({loginTicket, token, fingerprint}) => {
+                    const resp = await fetch('https://xstation.xtb.com/signon/v2/tickets', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Time-Zone': String(-(new Date().getTimezoneOffset())),
+                        },
+                        body: JSON.stringify({loginTicket, token, fingerprint, twoFactorAuthType: 'SMS'}),
+                        credentials: 'include',
+                    });
+                    return await resp.json();
+                }""",
+                {
+                    "loginTicket": self._login_ticket,
+                    "token": code,
+                    "fingerprint": await self._page.evaluate(
+                        "() => { const ua = navigator.userAgent; "
+                        "return crypto.subtle ? crypto.subtle.digest('SHA-256', new TextEncoder().encode(ua))"
+                        ".then(b => Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase()) "
+                        ": '' }"
+                    ),
+                },
+            )
+            if isinstance(result, dict):
+                ticket = result.get("ticket")
+                if result.get("loginPhase") == "TGT_CREATED" and ticket:
+                    self._tgt = ticket
+                    self._tgt_event.set()
+
+        # Wait for TGT from network response
+        try:
+            await asyncio.wait_for(self._tgt_event.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            await self.close()
+            raise CASError("BROWSER_AUTH_OTP_TIMEOUT", "Timed out waiting for TGT after OTP submission")
+
+        tgt = self._tgt
+        await self.close()
+
+        if not tgt:
+            raise CASError("BROWSER_AUTH_NO_TGT", "OTP submitted but no TGT received")
+
+        return CASLoginSuccess(
+            tgt=tgt,
+            expires_at=time.time() + 8 * 3600,
+        )
+
+    async def close(self) -> None:
+        """Clean up browser resources."""
+        try:
+            if self._browser:
+                await self._browser.close()
+        except Exception:
+            pass
+        try:
+            if self._playwright:
+                await self._playwright.stop()
+        except Exception:
+            pass
+        self._browser = None
+        self._page = None
+        self._playwright = None
+
+    async def _on_response(self, response) -> None:
+        """Intercept network responses to extract TGT."""
+        try:
+            url = response.url
+
+            if "v2/tickets" in url and "serviceTicket" not in url:
+                ct = response.headers.get("content-type", "")
+                if "json" not in ct:
+                    return
+                try:
+                    body = await response.json()
+                except Exception:
+                    return
+
+                login_phase = body.get("loginPhase")
+                ticket = body.get("ticket") or body.get("tgt")
+
+                if login_phase == "TGT_CREATED" and ticket and ticket.startswith("TGT-"):
+                    logger.info("TGT intercepted from v2/tickets response")
+                    self._tgt = ticket
+                    self._tgt_event.set()
+                    return
+
+                if login_phase == "TWO_FACTOR_REQUIRED":
+                    self._login_ticket = body.get("ticket") or body.get("loginTicket") or body.get("sessionId") or ""
+                    self._two_factor_info = body
+                    self._two_factor_detected.set()
+                    logger.info("2FA required — login_ticket: %s", self._login_ticket[:30] if self._login_ticket else "?")
+                    return
+
+            # Check for CASTGT cookie in any response
+            headers = response.headers
+            set_cookie = headers.get("set-cookie", "")
+            if "CASTGT=" in set_cookie:
+                for part in set_cookie.split(";"):
+                    part = part.strip()
+                    if part.startswith("CASTGT="):
+                        tgt = part[len("CASTGT="):]
+                        if tgt.startswith("TGT-"):
+                            logger.info("TGT intercepted from CASTGT cookie")
+                            self._tgt = tgt
+                            self._tgt_event.set()
+                            return
+
+        except Exception as e:
+            logger.debug("Error intercepting response: %s", e)

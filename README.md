@@ -93,6 +93,39 @@ async def main():
 asyncio.run(main())
 ```
 
+### gRPC-web Mode
+
+Executes trades via gRPC-web through Chrome DevTools Protocol. Requires Chrome with xStation5 open and remote debugging enabled:
+
+```bash
+google-chrome --remote-debugging-port=18800 https://xstation5.xtb.com
+```
+
+```python
+import asyncio
+from xtb_api import GrpcClient
+
+async def main():
+    client = GrpcClient(
+        cdp_url="http://localhost:18800",
+        account_number="51984891",
+        account_server="XS-real1",
+    )
+
+    await client.connect()
+
+    # Get JWT (requires TGT from CAS auth)
+    jwt = await client.get_jwt(tgt="YOUR_TGT_HERE")
+
+    # Execute trade (instrument_id is gRPC ID, not WebSocket quoteId)
+    result = await client.buy(instrument_id=9438, volume=1)  # CIG.PL
+    print(f"Success: {result.success}, Order: {result.order_id}")
+
+    await client.disconnect()
+
+asyncio.run(main())
+```
+
 ### Push Events (WebSocket mode)
 
 ```python
@@ -137,6 +170,7 @@ Symbols use the format `{assetClassId}_{symbolName}_{groupId}`:
 src/xtb_api/
   auth/          CAS authentication (TGT → Service Ticket)
   browser/       Chrome DevTools Protocol client (Playwright)
+  grpc/          gRPC-web trading via Chrome CDP
   ws/            WebSocket CoreAPI client
   types/         Pydantic models & enums
   client.py      Unified high-level client

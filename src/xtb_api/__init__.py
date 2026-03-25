@@ -4,6 +4,7 @@ from xtb_api.client import XTBClient, ClientMode, XTBClientConfig
 from xtb_api.auth.cas_client import CASClient, CASClientConfig
 from xtb_api.ws.ws_client import XTBWebSocketClient
 from xtb_api.browser.browser_client import XTBBrowserClient, BrowserClientConfig
+from xtb_api.grpc import GrpcClient, GrpcTradeResult, SIDE_BUY, SIDE_SELL
 from xtb_api.types.enums import (
     Xs6Side,
     TradeCommand,
@@ -68,6 +69,11 @@ __all__ = [
     # Browser
     "XTBBrowserClient",
     "BrowserClientConfig",
+    # gRPC
+    "GrpcClient",
+    "GrpcTradeResult",
+    "SIDE_BUY",
+    "SIDE_SELL",
     # Enums
     "Xs6Side",
     "TradeCommand",

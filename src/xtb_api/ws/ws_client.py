@@ -196,9 +196,16 @@ class XTBWebSocketClient:
         elif auth.credentials:
             if not self._cas_client:
                 self._cas_client = CASClient()
-            login_result = await self._cas_client.login(
-                auth.credentials.email, auth.credentials.password
-            )
+
+            if auth.browser_auth:
+                self._browser_auth_active = True
+                login_result = await self._cas_client.login_with_browser(
+                    auth.credentials.email, auth.credentials.password
+                )
+            else:
+                login_result = await self._cas_client.login(
+                    auth.credentials.email, auth.credentials.password
+                )
 
             if isinstance(login_result, CASLoginTwoFactorRequired):
                 self._emit(
@@ -439,10 +446,15 @@ class XTBWebSocketClient:
         if not self._cas_client:
             raise RuntimeError("No CAS client available - authentication not started")
 
-        ticket = login_ticket or session_id or ""
-        two_factor_result = await self._cas_client.login_with_two_factor(
-            ticket, code, two_factor_auth_type
-        )
+        # Route OTP to browser auth if active
+        if getattr(self, "_browser_auth_active", False):
+            two_factor_result = await self._cas_client.submit_browser_otp(code)
+            self._browser_auth_active = False
+        else:
+            ticket = login_ticket or session_id or ""
+            two_factor_result = await self._cas_client.login_with_two_factor(
+                ticket, code, two_factor_auth_type
+            )
 
         if isinstance(two_factor_result, CASLoginTwoFactorRequired):
             self._emit(
