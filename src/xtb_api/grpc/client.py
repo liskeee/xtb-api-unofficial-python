@@ -217,8 +217,16 @@ class GrpcClient:
         }})()
         """
 
-        async with websockets.asyncio.client.connect(worker_ws_url) as ws:
-            result = await self._evaluate_js(ws, js, await_promise=True, timeout=20.0)
+        try:
+            async with websockets.asyncio.client.connect(worker_ws_url) as ws:
+                result = await self._evaluate_js(ws, js, await_promise=True, timeout=20.0)
+        except websockets.exceptions.ConnectionClosed as e:
+            raise RuntimeError(f"Worker connection closed: {e}") from e
+        except Exception as e:
+            # Also catch ConnectionClosedError which may be a subclass
+            if "ConnectionClosed" in type(e).__name__:
+                raise RuntimeError(f"Worker connection closed: {e}") from e
+            raise
 
         if not result:
             raise RuntimeError("Worker fetch returned empty response")
@@ -350,6 +358,8 @@ class GrpcClient:
 
         return base64.b64decode(result)
 
+    _WORKER_SHUTDOWN_KEYWORDS = ("shutting down", "global scope", "closed", "connection closed")
+
     async def _grpc_call(
         self,
         endpoint: str,
@@ -358,42 +368,93 @@ class GrpcClient:
     ) -> bytes:
         """Make a gRPC-web call, trying approaches in priority order:
         worker → isolated world → page.
+
+        Wraps the entire call in a retry loop (max 3 attempts) to handle
+        the case where the xStation5 Service Worker restarts and gets a
+        new CDP target URL.
         """
         if not self._page_ws_url:
             self._page_ws_url, self._worker_ws_url = self._discover_targets()
 
-        # Approach 1: Worker (clean fetch)
-        if self._worker_ws_url:
-            try:
-                return await self._grpc_call_via_worker(
-                    self._worker_ws_url, endpoint, body_b64, jwt
-                )
-            except Exception as e:
-                logger.warning("Worker fetch failed: %s — trying isolated world", e)
+        last_error: Exception | None = None
+        max_attempts = 3
 
-        # Approach 2: Isolated world on page
-        if self._page_ws_url:
-            try:
-                return await self._grpc_call_via_isolated_world(
-                    self._page_ws_url, endpoint, body_b64, jwt
-                )
-            except Exception as e:
-                logger.warning("Isolated world fetch failed: %s — trying page", e)
+        for attempt in range(1, max_attempts + 1):
+            if attempt > 1:
+                await asyncio.sleep(0.5)
+                logger.info("_grpc_call retry attempt %d/%d", attempt, max_attempts)
 
-            # Approach 3: Direct page eval
-            try:
-                return await self._grpc_call_via_page(
-                    self._page_ws_url, endpoint, body_b64, jwt
+            # Approach 1: Worker (clean fetch)
+            if self._worker_ws_url:
+                try:
+                    return await self._grpc_call_via_worker(
+                        self._worker_ws_url, endpoint, body_b64, jwt
+                    )
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if any(kw in err_str for kw in self._WORKER_SHUTDOWN_KEYWORDS):
+                        logger.warning(
+                            "Worker scope shutting down (%s) — rediscovering targets (attempt %d)",
+                            e, attempt,
+                        )
+                        self._worker_ws_url = None
+                        try:
+                            self._page_ws_url, self._worker_ws_url = self._discover_targets()
+                        except Exception as disc_err:
+                            logger.warning("Target rediscovery failed: %s", disc_err)
+
+                        # If worker was rediscovered, retry worker immediately
+                        if self._worker_ws_url:
+                            try:
+                                return await self._grpc_call_via_worker(
+                                    self._worker_ws_url, endpoint, body_b64, jwt
+                                )
+                            except Exception as retry_e:
+                                logger.warning(
+                                    "Worker retry after rediscovery failed: %s — falling through",
+                                    retry_e,
+                                )
+                                last_error = retry_e
+                        else:
+                            last_error = e
+                    else:
+                        logger.warning("Worker fetch failed: %s — trying isolated world", e)
+                        last_error = e
+
+            # Approach 2: Isolated world on page
+            if self._page_ws_url:
+                try:
+                    return await self._grpc_call_via_isolated_world(
+                        self._page_ws_url, endpoint, body_b64, jwt
+                    )
+                except Exception as e:
+                    logger.warning("Isolated world fetch failed: %s — trying page", e)
+                    last_error = e
+
+                # Approach 3: Direct page eval
+                try:
+                    return await self._grpc_call_via_page(
+                        self._page_ws_url, endpoint, body_b64, jwt
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Page eval fetch failed (attempt %d/%d): %s",
+                        attempt, max_attempts, e,
+                    )
+                    last_error = e
+                    continue  # retry loop
+
+            else:
+                last_error = last_error or RuntimeError(
+                    "No CDP targets available. Is Chrome running with "
+                    f"--remote-debugging-port on {self._cdp_url}?"
                 )
-            except Exception as e:
-                raise RuntimeError(
-                    f"All CDP fetch approaches failed. Last error: {e}"
-                ) from e
+                continue  # retry loop
 
         raise RuntimeError(
-            "No CDP targets available. Is Chrome running with "
-            f"--remote-debugging-port on {self._cdp_url}?"
-        )
+            f"All CDP fetch approaches failed after {max_attempts} attempts. "
+            f"Last error: {last_error}"
+        ) from last_error
 
     # ── Public API ───────────────────────────────────────────────
 
