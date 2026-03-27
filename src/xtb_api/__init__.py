@@ -27,6 +27,7 @@ from xtb_api.types.trading import (
     INewMarketOrderEvent,
     TradeOptions,
     Position,
+    PendingOrder,
     AccountBalance,
     TradeResult,
 )
@@ -98,6 +99,7 @@ __all__ = [
     "INewMarketOrderEvent",
     "TradeOptions",
     "Position",
+    "PendingOrder",
     "AccountBalance",
     "TradeResult",
     # WebSocket types

@@ -25,6 +25,7 @@ from xtb_api.types.trading import (
     INewMarketOrderEvent,
     ISize,
     IXs6AuthAccount,
+    PendingOrder,
     Position,
     TradeOptions,
     TradeResult,
@@ -166,7 +167,10 @@ class XTBWebSocketClient:
         self._update_status(SocketStatus.CONNECTING)
 
         try:
-            self._ws = await websockets.asyncio.client.connect(self._config.url)
+            self._ws = await websockets.asyncio.client.connect(
+                self._config.url,
+                max_size=20 * 1024 * 1024,  # 20MB for large symbol lists
+            )
         except Exception as e:
             self._update_status(SocketStatus.ERROR)
             raise
@@ -555,6 +559,40 @@ class XTBWebSocketClient:
 
         return positions
 
+    async def get_orders(self) -> list[PendingOrder]:
+        """Get all pending (limit/stop) orders."""
+        res = await self.send(
+            "getAllOrders",
+            {"getAndSubscribeElement": {"eid": SubscriptionEid.ORDERS}},
+        )
+
+        elements = self._extract_elements(res)
+        orders: list[PendingOrder] = []
+
+        for el in elements:
+            trade = (el or {}).get("value", {}).get("xcfdtrade")
+            if not trade:
+                continue
+
+            side_val = int(trade.get("side", 0))
+            orders.append(
+                PendingOrder(
+                    symbol=str(trade.get("symbol", "")),
+                    instrument_id=int(trade["idQuote"]) if trade.get("idQuote") is not None else None,
+                    volume=float(trade.get("volume", 0)),
+                    price=float(trade.get("openPrice", 0)),
+                    stop_loss=float(trade["sl"]) if trade.get("sl") and trade["sl"] != 0 else None,
+                    take_profit=float(trade["tp"]) if trade.get("tp") and trade["tp"] != 0 else None,
+                    side="buy" if side_val == Xs6Side.BUY else "sell",
+                    order_id=str(trade["positionId"]) if trade.get("positionId") is not None else None,
+                    order_type=str(trade.get("orderType", "")),
+                    expiration=int(trade["expiration"]) if trade.get("expiration") is not None else None,
+                    open_time=int(trade["openTime"]) if trade.get("openTime") is not None else None,
+                )
+            )
+
+        return orders
+
     async def buy(
         self, symbol: str, volume: int, options: TradeOptions | None = None
     ) -> TradeResult:
@@ -605,7 +643,7 @@ class XTBWebSocketClient:
             all_symbols.append(
                 InstrumentSearchResult(
                     symbol=str(sym.get("name", "")),
-                    instrument_id=int(sym.get("quoteId", 0)),
+                    instrument_id=int(sym.get("instrumentId", sym.get("quoteId", 0))),
                     name=str(sym.get("description", sym.get("name", ""))),
                     description=str(sym.get("description", "")),
                     asset_class=str(sym.get("idAssetClass", "")),

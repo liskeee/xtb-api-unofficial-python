@@ -76,4 +76,5 @@ class SubscriptionEid(IntEnum):
     SYMBOL_GROUPS = 4
     GROUP_SETTINGS = 5
     REQUEST_STATUS = 6
+    ORDERS = 7
     TOTAL_BALANCE = 1043

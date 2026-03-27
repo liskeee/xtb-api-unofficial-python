@@ -91,6 +91,21 @@ class Position(BaseModel):
     open_time: int | None = None
 
 
+class PendingOrder(BaseModel):
+    """Pending (limit/stop) order information."""
+    symbol: str
+    instrument_id: int | None = None
+    volume: float
+    price: float
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    side: Literal["buy", "sell"]
+    order_id: str | None = None
+    order_type: str | None = None
+    expiration: int | None = None
+    open_time: int | None = None
+
+
 class AccountBalance(BaseModel):
     """Account balance and equity information."""
     balance: float
