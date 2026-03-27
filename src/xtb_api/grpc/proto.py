@@ -97,11 +97,11 @@ def build_create_access_token_request(
 
     Proto structure (discovered via proto classes in xStation5):
       message CreateAccessTokenRequest {
-          string tgt = 1;          // TGT cookie value
+          string tgt = 1;          // TGT/ST cookie value (optional if CASTGT cookie present)
           Account account = 2;     // Account info
       }
       message Account {
-          string number = 1;       // e.g. "51984891"
+          uint64 number = 1;       // e.g. 51984891 (varint, NOT string)
           string server = 2;       // e.g. "XS-real1"
       }
 
@@ -111,8 +111,9 @@ def build_create_access_token_request(
       - acs: account server (REQUIRED for trading!)
     """
     # Build inner Account message
+    # account_number is varint-encoded (field type 0), not length-delimited
     account_msg = (
-        encode_field_bytes(1, account_number.encode("utf-8"))
+        encode_field_varint(1, int(account_number))
         + encode_field_bytes(2, account_server.encode("utf-8"))
     )
     # Build outer CreateAccessTokenRequest
