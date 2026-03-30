@@ -2,6 +2,7 @@
 
 from xtb_api.client import XTBClient, ClientMode, XTBClientConfig
 from xtb_api.auth.cas_client import CASClient, CASClientConfig
+from xtb_api.auth.auth_manager import AuthManager
 from xtb_api.ws.ws_client import XTBWebSocketClient
 from xtb_api.browser.browser_client import XTBBrowserClient, BrowserClientConfig
 from xtb_api.grpc import GrpcClient, GrpcTradeResult, SIDE_BUY, SIDE_SELL
@@ -63,6 +64,7 @@ __all__ = [
     "ClientMode",
     "XTBClientConfig",
     # Auth
+    "AuthManager",
     "CASClient",
     "CASClientConfig",
     # WebSocket
