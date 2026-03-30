@@ -144,6 +144,37 @@ class AuthManager:
                 return st_result.service_ticket
             raise
 
+    async def create_authenticated_client(
+        self,
+        ws_url: str = "wss://api5reala.x-station.eu/v1/xstation",
+        account_number: int = 0,
+        service: str = "xapi5",
+    ) -> "XTBWebSocketClient":
+        """Create a fully connected and authenticated WebSocket client.
+
+        Handles the full flow: TGT -> service ticket -> WS connect -> login.
+
+        Args:
+            ws_url: WebSocket URL for xStation.
+            account_number: XTB account number.
+            service: CAS service name.
+
+        Returns:
+            Connected and authenticated XTBWebSocketClient.
+        """
+        from xtb_api.types.websocket import WSClientConfig
+        from xtb_api.ws.ws_client import XTBWebSocketClient
+
+        service_ticket = await self.get_service_ticket(service)
+
+        config = WSClientConfig(url=ws_url, account_number=account_number)
+        client = XTBWebSocketClient(config)
+        await client.connect()
+        await client.register_client_info()
+        await client.login_with_service_ticket(service_ticket)
+
+        return client
+
     def invalidate(self) -> None:
         """Clear cached TGT from memory and session file."""
         self._invalidate_cache()
