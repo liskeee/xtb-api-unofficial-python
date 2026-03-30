@@ -158,83 +158,30 @@ class BrowserCASAuth:
         """Fill OTP code into the 2FA form in the browser and wait for TGT.
 
         The 2FA component is `XS6-TWO-FACTOR-AUTHENTICATION` — a web component
-        with Shadow DOM. We find the OTP input inside the shadow root.
+        with Shadow DOM. Playwright's get_by_placeholder/get_by_role auto-pierce
+        shadow DOM, so no manual shadowRoot traversal is needed.
         """
         if not self._page:
             raise CASError("BROWSER_AUTH_NO_PAGE", "Browser page not available — call login() first")
 
         logger.info("Submitting OTP code via browser")
+        page = self._page
 
-        # Wait for 2FA web component to become visible
-        await self._page.wait_for_timeout(2000)
+        # Wait for 2FA modal to appear
+        await page.wait_for_timeout(2000)
 
-        # Try to find OTP input — first in shadow DOM, then regular DOM
-        otp_filled = await self._page.evaluate(
-            """(code) => {
-                // Search in shadow DOM (XS6-TWO-FACTOR-AUTHENTICATION)
-                const tfa = document.querySelector('xs6-two-factor-authentication');
-                if (tfa && tfa.shadowRoot) {
-                    const input = tfa.shadowRoot.querySelector('input[type="tel"], input[type="text"], input[inputmode="numeric"], input');
-                    if (input) {
-                        input.value = code;
-                        input.dispatchEvent(new Event('input', { bubbles: true }));
-                        input.dispatchEvent(new Event('change', { bubbles: true }));
-                        // Try to find and click submit button
-                        const btn = tfa.shadowRoot.querySelector('button[type="submit"], button');
-                        if (btn) btn.click();
-                        return true;
-                    }
-                }
-                // Fallback: regular DOM
-                const inputs = document.querySelectorAll('input[type="tel"], input[inputmode="numeric"]');
-                for (const inp of inputs) {
-                    if (inp.offsetParent !== null) {  // visible
-                        inp.value = code;
-                        inp.dispatchEvent(new Event('input', { bubbles: true }));
-                        inp.dispatchEvent(new Event('change', { bubbles: true }));
-                        return true;
-                    }
-                }
-                return false;
-            }""",
-            code,
-        )
+        # Playwright auto-pierces shadow DOM for these locators
+        otp_input = page.get_by_placeholder("Wprowadź kod tutaj")
+        await otp_input.wait_for(state="visible", timeout=10000)
+        await otp_input.fill(code)
 
-        if not otp_filled:
-            # Last resort: maybe the form auto-submits on the v2/tickets 2FA call
-            # which we can do via page.evaluate with fetch
-            logger.info("OTP input not found in DOM, submitting via fetch inside browser context")
-            result = await self._page.evaluate(
-                """async ({loginTicket, token, fingerprint}) => {
-                    const resp = await fetch('https://xstation.xtb.com/signon/v2/tickets', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Time-Zone': String(-(new Date().getTimezoneOffset())),
-                        },
-                        body: JSON.stringify({loginTicket, token, fingerprint, twoFactorAuthType: 'SMS'}),
-                        credentials: 'include',
-                    });
-                    return await resp.json();
-                }""",
-                {
-                    "loginTicket": self._login_ticket,
-                    "token": code,
-                    "fingerprint": await self._page.evaluate(
-                        "() => { const ua = navigator.userAgent; "
-                        "return crypto.subtle ? crypto.subtle.digest('SHA-256', new TextEncoder().encode(ua))"
-                        ".then(b => Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase()) "
-                        ": '' }"
-                    ),
-                },
-            )
-            if isinstance(result, dict):
-                ticket = result.get("ticket")
-                if result.get("loginPhase") == "TGT_CREATED" and ticket:
-                    self._tgt = ticket
-                    self._tgt_event.set()
+        # Click submit button
+        submit_btn = page.get_by_role("button", name="Weryfikacja")
+        await submit_btn.click()
 
-        # Wait for TGT from network response
+        logger.info("OTP submitted, waiting for TGT...")
+
+        # Wait for TGT from network response interceptor
         try:
             await asyncio.wait_for(self._tgt_event.wait(), timeout=30)
         except asyncio.TimeoutError:

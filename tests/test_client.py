@@ -109,7 +109,7 @@ class TestXTBClientUtils:
         # Just verify all public exports are accessible
         assert XTBClient is not None
         assert CASClient is not None
-        assert Xs6Side.BUY == 1
+        assert Xs6Side.BUY == 0
         assert SocketStatus.CONNECTED == "CONNECTED"
         assert SubscriptionEid.TICKS == 2
 

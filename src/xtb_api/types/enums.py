@@ -5,9 +5,8 @@ from enum import Enum, IntEnum
 
 class Xs6Side(IntEnum):
     """Trade side enumeration for buy/sell operations."""
-    SIDE_NOT_SET = 0
-    BUY = 1
-    SELL = 2
+    BUY = 0
+    SELL = 1
 
 
 class TradeCommand(IntEnum):
