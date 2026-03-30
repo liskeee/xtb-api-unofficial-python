@@ -13,6 +13,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from xtb_api.grpc.types import GrpcTradeResult
 
 from xtb_api.auth.cas_client import CASClient, CASClientConfig
 from xtb_api.types.websocket import (
@@ -174,6 +178,85 @@ class AuthManager:
         await client.login_with_service_ticket(service_ticket)
 
         return client
+
+    async def execute_trade(
+        self,
+        instrument_id: int,
+        volume: int,
+        side: str,
+        cdp_url: str = "http://localhost:18800",
+        account_number: str = "",
+        account_server: str = "XS-real1",
+    ) -> GrpcTradeResult:
+        """Execute a trade via gRPC-web. Handles auth (TGT->ST->JWT) internally.
+
+        Args:
+            instrument_id: gRPC instrument ID (e.g., 9438 for CIG.PL).
+            volume: Number of shares.
+            side: ``'buy'`` or ``'sell'``.
+            cdp_url: Chrome DevTools Protocol URL.
+            account_number: XTB account number.
+            account_server: XTB account server.
+
+        Returns:
+            GrpcTradeResult with success status and order details.
+        """
+        from xtb_api.grpc import GrpcClient
+
+        client = GrpcClient(
+            cdp_url=cdp_url,
+            account_number=account_number,
+            account_server=account_server,
+        )
+        await client.connect()
+
+        # Get JWT via service ticket
+        service_ticket = await self.get_service_ticket("xapi5")
+        await client.get_jwt(service_ticket)
+
+        # Execute
+        if side.lower() == "buy":
+            result = await client.buy(instrument_id, volume)
+        else:
+            result = await client.sell(instrument_id, volume)
+
+        # Retry once with fresh JWT if failed
+        if not result.success:
+            self._invalidate_cache()
+            service_ticket = await self.get_service_ticket("xapi5")
+            await client.get_jwt(service_ticket)
+            if side.lower() == "buy":
+                result = await client.buy(instrument_id, volume)
+            else:
+                result = await client.sell(instrument_id, volume)
+
+        await client.disconnect()
+        return result
+
+    async def search_instruments(
+        self,
+        query: str,
+        ws_url: str = "wss://api5reala.x-station.eu/v1/xstation",
+        account_number: int = 0,
+    ) -> list:
+        """Search instruments via WebSocket client.
+
+        Args:
+            query: Search string (e.g., ``'CIG'``, ``'BITCOIN'``).
+            ws_url: WebSocket URL for xStation.
+            account_number: XTB account number.
+
+        Returns:
+            List of matching instruments.
+        """
+        client = await self.create_authenticated_client(ws_url, account_number)
+        try:
+            return await client.search_instrument(query)
+        finally:
+            try:
+                await client.disconnect_async()
+            except Exception:
+                pass
 
     def invalidate(self) -> None:
         """Clear cached TGT from memory and session file."""
