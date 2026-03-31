@@ -526,6 +526,7 @@ class XTBWebSocketClient:
         res = await self.send(
             "getPositions",
             {"getAndSubscribeElement": {"eid": SubscriptionEid.POSITIONS}},
+            timeout_ms=30000,
         )
 
         elements = self._extract_elements(res)

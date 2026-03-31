@@ -1,23 +1,18 @@
-"""gRPC-web client for XTB xStation5 trading via Chrome DevTools Protocol.
+"""gRPC-web client for XTB xStation5 trading.
 
-Requires Chrome with xStation5 open and remote debugging enabled.
-Communicates through the Web Worker context which has clean fetch access
-to ipax.xtb.com (the gRPC-web backend).
+Supports two transport modes:
+  1. **Native Python** (primary) — direct HTTP POST via httpx, no browser needed.
+     Requires only a valid JWT/TGT. Zero external dependencies beyond httpx.
+  2. **Chrome CDP** (fallback) — sends fetch() through Chrome DevTools Protocol
+     when native transport fails (e.g. if cookies/origin restrictions apply).
 
 Flow:
-1. Connect to Chrome CDP (discover xStation5 tab + Worker)
-2. Build CreateAccessTokenRequest protobuf (TGT + Account)
-3. Send auth request via Worker → get JWT with account scope (acn/acs)
-4. Send trade requests via Worker with JWT
+1. Build CreateAccessTokenRequest protobuf (TGT + Account)
+2. Send auth request → get JWT with account scope (acn/acs)
+3. Send trade requests with JWT
 
-Architecture:
-  Python → CDP WebSocket → Chrome tab/worker → gRPC-web → ipax.xtb.com
-
-The xStation5 page patches window.fetch, so we use multiple approaches
-to find a clean execution context:
-  1. Dedicated Web Worker (has its own clean globals)
-  2. Page.createIsolatedWorld (new JS context with original builtins)
-  3. Direct page eval with iframe fetch restoration (last resort)
+The native transport sends standard gRPC-web-text POST requests to
+ipax.xtb.com with Authorization: Bearer {jwt}.
 """
 
 from __future__ import annotations
@@ -31,10 +26,15 @@ import urllib.request
 from typing import Any
 
 try:
+    import httpx
+except ImportError:
+    httpx = None  # type: ignore[assignment]
+
+try:
     import websockets
     import websockets.asyncio.client
-except ImportError as e:
-    raise ImportError("websockets library required: pip install websockets") from e
+except ImportError:
+    websockets = None  # type: ignore[assignment]
 
 from xtb_api.grpc.proto import (
     GRPC_AUTH_ENDPOINT,
@@ -60,18 +60,67 @@ class GrpcClient:
 
     def __init__(
         self,
-        cdp_url: str = "http://localhost:18800",
+        cdp_url: str | None = "http://localhost:18800",
         account_number: str = "51984891",
         account_server: str = "XS-real1",
+        cookies: dict[str, str] | None = None,
     ) -> None:
         self._cdp_url = cdp_url
         self._account_number = account_number
         self._account_server = account_server
+        self._cookies = cookies
         self._jwt: str | None = None
         self._jwt_timestamp: float = 0.0
         self._worker_ws_url: str | None = None
         self._page_ws_url: str | None = None
         self._cdp_msg_id = 0
+
+    # ── Native Python Transport ────────────────────────────────────
+
+    async def _grpc_call_native(
+        self,
+        endpoint: str,
+        body_b64: str,
+        jwt: str | None = None,
+        cookies: dict[str, str] | None = None,
+    ) -> bytes:
+        """Make a gRPC-web call directly via httpx (no Chrome/CDP needed).
+
+        Args:
+            endpoint: Full gRPC-web endpoint URL.
+            body_b64: Base64-encoded protobuf body.
+            jwt: Optional JWT bearer token.
+            cookies: Optional cookies dict (if origin requires session cookies).
+
+        Returns:
+            Decoded protobuf response bytes.
+        """
+        if httpx is None:
+            raise RuntimeError("httpx is required for native transport: pip install httpx")
+
+        headers = {
+            "Content-Type": GRPC_WEB_TEXT_CONTENT_TYPE,
+            "Accept": GRPC_WEB_TEXT_CONTENT_TYPE,
+            "X-Grpc-Web": "1",
+            "x-user-agent": "grpc-web-javascript/0.1",
+        }
+        if jwt:
+            headers["Authorization"] = f"Bearer {jwt}"
+
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                endpoint,
+                content=body_b64,
+                headers=headers,
+                cookies=cookies,
+            )
+            resp.raise_for_status()
+            response_text = resp.text
+
+        if not response_text:
+            raise RuntimeError("Native gRPC call returned empty response")
+
+        return base64.b64decode(response_text)
 
     # ── CDP Discovery ────────────────────────────────────────────
 
@@ -367,12 +416,26 @@ class GrpcClient:
         jwt: str | None = None,
     ) -> bytes:
         """Make a gRPC-web call, trying approaches in priority order:
-        worker → isolated world → page.
+        1. Native Python httpx (no Chrome needed)
+        2. CDP worker → isolated world → page (fallback)
 
-        Wraps the entire call in a retry loop (max 3 attempts) to handle
-        the case where the xStation5 Service Worker restarts and gets a
-        new CDP target URL.
+        Wraps CDP fallback in a retry loop (max 3 attempts) to handle
+        the case where the xStation5 Service Worker restarts.
         """
+        # ── Approach 0: Native Python transport (primary) ────────
+        if httpx is not None:
+            try:
+                return await self._grpc_call_native(endpoint, body_b64, jwt, cookies=self._cookies)
+            except Exception as e:
+                logger.warning("Native transport failed: %s — falling back to CDP", e)
+
+        # ── CDP fallback ─────────────────────────────────────────
+        if websockets is None:
+            raise RuntimeError(
+                "Both native (httpx) and CDP (websockets) transports unavailable. "
+                "Install httpx or websockets."
+            )
+
         if not self._page_ws_url:
             self._page_ws_url, self._worker_ws_url = self._discover_targets()
 
@@ -459,7 +522,15 @@ class GrpcClient:
     # ── Public API ───────────────────────────────────────────────
 
     async def connect(self) -> None:
-        """Discover xStation5 tab and Worker via CDP."""
+        """Discover xStation5 tab and Worker via CDP.
+
+        Optional when using native transport (httpx). Only needed if
+        CDP fallback is desired.
+        """
+        if not self._cdp_url:
+            logger.info("No CDP URL configured — using native transport only")
+            return
+
         page_ws, worker_ws = self._discover_targets()
         self._page_ws_url = page_ws
         self._worker_ws_url = worker_ws
@@ -476,11 +547,13 @@ class GrpcClient:
             "found" if worker_ws else "none",
         )
 
-    async def get_jwt(self, tgt: str) -> str:
+    async def get_jwt(self, tgt_or_st: str) -> str:
         """Get JWT with account scope via CreateAccessToken gRPC call.
 
         Args:
-            tgt: TGT (Ticket Granting Ticket) from CAS authentication.
+            tgt_or_st: TGT (Ticket Granting Ticket) from CAS authentication.
+                       Note: despite accepting both names, CreateAccessToken
+                       actually requires the TGT, not a service ticket.
 
         Returns:
             JWT string with acn/acs fields for trading.
@@ -492,7 +565,7 @@ class GrpcClient:
         logger.info("Requesting new JWT via CreateAccessToken...")
 
         proto_msg = build_create_access_token_request(
-            tgt=tgt,
+            tgt=tgt_or_st,
             account_number=self._account_number,
             account_server=self._account_server,
         )
