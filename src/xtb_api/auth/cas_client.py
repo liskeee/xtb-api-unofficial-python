@@ -85,7 +85,7 @@ class CASClient:
             "username": email,
             "password": password,
             "fingerprint": fingerprint,
-            "rememberMe": False,
+            "rememberMe": True,
         }
 
         headers = {
