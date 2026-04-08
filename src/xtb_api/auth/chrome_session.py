@@ -234,9 +234,11 @@ class ChromeSession:
             if path:
                 return path
 
-        # Playwright bundled Chromium
+        # Playwright bundled Chromium (supports both old chrome-linux and new chrome-linux64 layout)
         for pattern in [
+            str(Path.home() / '.cache/ms-playwright/chromium-*/chrome-linux64/chrome'),
             str(Path.home() / '.cache/ms-playwright/chromium-*/chrome-linux/chrome'),
+            str(Path.home() / '.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell'),
             str(Path.home() / '.cache/ms-playwright/chromium-*/chrome-linux/headless_shell'),
         ]:
             matches = glob.glob(pattern)
