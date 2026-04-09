@@ -1,6 +1,6 @@
 """Enumerations for XTB API protocol."""
 
-from enum import Enum, IntEnum
+from enum import IntEnum, StrEnum
 
 
 class Xs6Side(IntEnum):
@@ -52,7 +52,7 @@ class SymbolSessionType(IntEnum):
     LOBBY = 2
 
 
-class SocketStatus(str, Enum):
+class SocketStatus(StrEnum):
     """WebSocket connection status."""
     CONNECTING = "CONNECTING"
     CONNECTED = "CONNECTED"
@@ -61,7 +61,7 @@ class SocketStatus(str, Enum):
     ERROR = "SOCKET_ERROR"
 
 
-class XTBEnvironment(str, Enum):
+class XTBEnvironment(StrEnum):
     """XTB trading environment type."""
     REAL = "real"
     DEMO = "demo"

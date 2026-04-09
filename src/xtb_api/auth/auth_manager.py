@@ -11,7 +11,7 @@ import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -153,7 +153,7 @@ class AuthManager:
         ws_url: str = "wss://api5reala.x-station.eu/v1/xstation",
         account_number: int = 0,
         service: str = "xapi5",
-    ) -> "XTBWebSocketClient":
+    ) -> XTBWebSocketClient:
         """Create a fully connected and authenticated WebSocket client.
 
         Handles the full flow: TGT -> service ticket -> WS connect -> login.
@@ -372,8 +372,8 @@ class AuthManager:
         if not self._session_file:
             return
 
-        extracted_at = datetime.now(timezone.utc)
-        expires_at_dt = datetime.fromtimestamp(expires_at, tz=timezone.utc)
+        extracted_at = datetime.now(UTC)
+        expires_at_dt = datetime.fromtimestamp(expires_at, tz=UTC)
 
         data = {
             "tgt": tgt,

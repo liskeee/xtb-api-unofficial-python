@@ -1,61 +1,61 @@
 """Unofficial Python client for XTB xStation5 trading platform."""
 
-from xtb_api.client import XTBClient, ClientMode, XTBClientConfig
-from xtb_api.auth.cas_client import CASClient, CASClientConfig
 from xtb_api.auth.auth_manager import AuthManager
+from xtb_api.auth.cas_client import CASClient, CASClientConfig
 from xtb_api.auth.chrome_session import ChromeSession
-from xtb_api.ws.ws_client import XTBWebSocketClient
-from xtb_api.browser.browser_client import XTBBrowserClient, BrowserClientConfig
-from xtb_api.grpc import GrpcClient, GrpcTradeResult, SIDE_BUY, SIDE_SELL
+from xtb_api.browser.browser_client import BrowserClientConfig, XTBBrowserClient
+from xtb_api.client import ClientMode, XTBClient, XTBClientConfig
+from xtb_api.grpc import SIDE_BUY, SIDE_SELL, GrpcClient, GrpcTradeResult
 from xtb_api.types.enums import (
-    Xs6Side,
+    RequestTradeData,
+    SocketStatus,
+    SubscriptionEid,
+    SymbolSessionType,
     TradeCommand,
     TradeType,
-    RequestTradeData,
-    SymbolSessionType,
-    SocketStatus,
+    Xs6Side,
     XTBEnvironment,
-    SubscriptionEid,
 )
-from xtb_api.types.instrument import InstrumentSymbol, Quote, InstrumentSearchResult
+from xtb_api.types.instrument import InstrumentSearchResult, InstrumentSymbol, Quote
 from xtb_api.types.trading import (
+    AccountBalance,
+    INewMarketOrder,
+    INewMarketOrderEvent,
     IPrice,
-    IVolume,
     ISize,
     IStopLossInput,
     ITakeProfitInput,
-    INewMarketOrder,
+    IVolume,
     IXs6AuthAccount,
-    INewMarketOrderEvent,
-    TradeOptions,
-    Position,
     PendingOrder,
-    AccountBalance,
+    Position,
+    TradeOptions,
     TradeResult,
 )
 from xtb_api.types.websocket import (
-    CoreAPICommand,
-    WSRequest,
-    WSResponse,
-    WSAuthOptions,
-    WSClientConfig,
-    ClientInfo,
-    XLoginResult,
-    WSPushMessage,
-    WSPushEvent,
+    CASError,
+    CASLoginResult,
     CASLoginSuccess,
     CASLoginTwoFactorRequired,
-    CASLoginResult,
-    CASError,
+    ClientInfo,
+    CoreAPICommand,
+    WSAuthOptions,
+    WSClientConfig,
+    WSPushEvent,
+    WSPushMessage,
+    WSRequest,
+    WSResponse,
+    XLoginResult,
 )
 from xtb_api.utils import (
+    build_account_id,
+    generate_req_id,
+    parse_symbol_key,
     price_from_decimal,
     price_to_decimal,
     volume_from,
-    generate_req_id,
-    build_account_id,
-    parse_symbol_key,
 )
+from xtb_api.ws.ws_client import XTBWebSocketClient
 
 __version__ = "0.1.0"
 

@@ -21,23 +21,15 @@ from xtb_api.types.enums import SocketStatus, SubscriptionEid, Xs6Side
 from xtb_api.types.instrument import InstrumentSearchResult, Quote
 from xtb_api.types.trading import (
     AccountBalance,
-    INewMarketOrder,
-    INewMarketOrderEvent,
-    ISize,
-    IXs6AuthAccount,
     PendingOrder,
     Position,
     TradeOptions,
     TradeResult,
 )
 from xtb_api.types.websocket import (
-    CASLoginSuccess,
     CASLoginTwoFactorRequired,
     ClientInfo,
-    WSAuthOptions,
     WSClientConfig,
-    WSPushEvent,
-    WSPushEventRow,
     WSPushMessage,
     WSResponse,
     XLoginAccountInfo,
@@ -171,7 +163,7 @@ class XTBWebSocketClient:
                 self._config.url,
                 max_size=20 * 1024 * 1024,  # 20MB for large symbol lists
             )
-        except Exception as e:
+        except Exception:
             self._update_status(SocketStatus.ERROR)
             raise
 
@@ -307,7 +299,7 @@ class XTBWebSocketClient:
         try:
             await self._ws.send(json.dumps(request))
             return await asyncio.wait_for(future, timeout=timeout_ms / 1000)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._pending_requests.pop(req_id, None)
             raise TimeoutError(f"Request {req_id} timed out")
 
@@ -385,11 +377,11 @@ class XTBWebSocketClient:
         # Parse login result
         resp_list = response.response or []
         if not resp_list:
-            raise RuntimeError(f"Login failed: empty response")
+            raise RuntimeError("Login failed: empty response")
 
         first = resp_list[0] if resp_list else {}
         if not isinstance(first, dict):
-            raise RuntimeError(f"Login failed: unexpected response format")
+            raise RuntimeError("Login failed: unexpected response format")
 
         login_data = first.get("xloginresult")
         if not login_data:

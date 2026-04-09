@@ -196,7 +196,7 @@ class GrpcClient:
                 raw = await asyncio.wait_for(
                     ws.recv(), timeout=deadline - time.monotonic()
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break
             response = json.loads(raw)
             if response.get("id") == msg_id:
