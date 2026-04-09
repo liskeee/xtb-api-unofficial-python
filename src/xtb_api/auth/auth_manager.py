@@ -150,6 +150,10 @@ class AuthManager:
         """Clear cached TGT from memory and session file."""
         self._invalidate_cache()
 
+    async def aclose(self) -> None:
+        """Close underlying HTTP clients. Call on shutdown."""
+        await self._cas.aclose()
+
     # -- Internal helpers --
 
     async def _login_with_fallback(self) -> CASLoginSuccess | CASLoginTwoFactorRequired:
@@ -178,10 +182,7 @@ class AuthManager:
         else:
             # Try REST 2FA submission
             two_factor_type = "TOTP" if "TOTP" in challenge.methods else challenge.two_factor_auth_type
-            try:
-                result = await self._cas.login_with_two_factor(challenge.login_ticket, code, two_factor_type)
-            except Exception:
-                raise
+            result = await self._cas.login_with_two_factor(challenge.login_ticket, code, two_factor_type)
 
         if isinstance(result, CASLoginTwoFactorRequired):
             raise CASError(
@@ -235,6 +236,16 @@ class AuthManager:
             return None
 
         try:
+            # Warn if file is readable by group/others (TGT is sensitive)
+            file_mode = self._session_file.stat().st_mode & 0o777
+            if file_mode & 0o077:
+                logger.warning(
+                    "Session file %s has permissive permissions (%o). "
+                    "Expected 0600. Re-saving with correct permissions.",
+                    self._session_file,
+                    file_mode,
+                )
+
             data = json.loads(self._session_file.read_text())
             tgt = data.get("tgt", "")
             expires_at_str = data.get("expires_at", "")

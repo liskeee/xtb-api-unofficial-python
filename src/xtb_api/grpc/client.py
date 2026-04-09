@@ -65,6 +65,11 @@ class GrpcClient:
         self._jwt_timestamp: float = 0.0
         self._http: httpx.AsyncClient | None = None
 
+    def invalidate_jwt(self) -> None:
+        """Clear the cached JWT so the next call fetches a fresh one."""
+        self._jwt = None
+        self._jwt_timestamp = 0.0
+
     async def _ensure_http(self) -> httpx.AsyncClient:
         """Get or create the long-lived httpx client."""
         if self._http is None or self._http.is_closed:

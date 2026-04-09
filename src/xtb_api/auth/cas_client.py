@@ -6,6 +6,7 @@ Handles the complete auth flow: login → TGT → Service Ticket → WebSocket l
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from datetime import UTC, datetime
 
@@ -180,8 +181,6 @@ class CASClient:
                     "CAS_V1_NO_LOCATION",
                     "CAS v1 login succeeded but no Location header found",
                 )
-
-            import re
 
             match = re.search(r"/tickets/([^/]+)$", location)
             if not match:

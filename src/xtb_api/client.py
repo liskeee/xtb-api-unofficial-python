@@ -123,6 +123,7 @@ class XTBClient:
         if self._grpc:
             await self._grpc.disconnect()
             self._grpc = None
+        await self._auth.aclose()
 
     # ── Read Operations (WebSocket) ──────────────────────────────
 
@@ -318,17 +319,18 @@ class XTBClient:
 
         instrument_id = await self._resolve_instrument_id(symbol)
 
-        # Merge flat kwargs into TradeOptions
-        effective_sl = (options.stop_loss if options else None) or stop_loss
-        effective_tp = (options.take_profit if options else None) or take_profit
+        # Merge flat kwargs into effective SL/TP (options take precedence)
+        effective_sl = options.stop_loss if options and options.stop_loss is not None else stop_loss
+        effective_tp = options.take_profit if options and options.take_profit is not None else take_profit
 
         # Convert SL/TP floats to protobuf price (value, scale)
+        # Use scale derived from the float's own decimal places (up to 5)
         sl_value = sl_scale = tp_value = tp_scale = None
         if effective_sl is not None:
-            p = price_from_decimal(effective_sl, 5)
+            p = price_from_decimal(effective_sl, _decimal_places(effective_sl))
             sl_value, sl_scale = p.value, p.scale
         if effective_tp is not None:
-            p = price_from_decimal(effective_tp, 5)
+            p = price_from_decimal(effective_tp, _decimal_places(effective_tp))
             tp_value, tp_scale = p.value, p.scale
 
         result = await grpc.execute_order(
@@ -344,8 +346,7 @@ class XTBClient:
         # Retry ONLY on auth error (RBAC/expired JWT), not on trade rejection
         if not result.success and result.error and "RBAC" in result.error:
             logger.info("RBAC error, refreshing JWT and retrying...")
-            grpc._jwt = None
-            grpc._jwt_timestamp = 0.0
+            grpc.invalidate_jwt()
             result = await grpc.execute_order(
                 instrument_id,
                 volume,
@@ -365,3 +366,12 @@ class XTBClient:
             order_id=result.order_id,
             error=result.error,
         )
+
+
+def _decimal_places(value: float, max_scale: int = 5) -> int:
+    """Determine the number of decimal places in a float, up to max_scale."""
+    text = f"{value:.{max_scale}f}"
+    decimals = text.split(".")[1] if "." in text else ""
+    # Strip trailing zeros
+    stripped = decimals.rstrip("0")
+    return max(len(stripped), 2)  # at least 2 for prices

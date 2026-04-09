@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import time
@@ -24,6 +25,7 @@ from xtb_api.auth.cas_client import CASClient
 from xtb_api.exceptions import (
     AuthenticationError,
     ProtocolError,
+    ReconnectionError,
     XTBConnectionError,
     XTBTimeoutError,
 )
@@ -86,6 +88,9 @@ class XTBWebSocketClient:
         self._listen_task: asyncio.Task[None] | None = None
         self._reconnect_delay = 1.0
         self._reconnecting = False
+        self._reconnect_attempts = 0
+        self._max_reconnect_attempts = 10
+        self._intentional_disconnect = False
         self._cas_client: CASClient | None = None
         self._login_result: XLoginResult | None = None
         self._authenticated = False
@@ -152,10 +157,18 @@ class XTBWebSocketClient:
             handlers.remove(callback)
 
     def _emit(self, event: str, *args: Any) -> None:
-        """Emit event to all registered handlers."""
+        """Emit event to all registered handlers.
+
+        Supports both sync and async callbacks. Async callbacks are
+        scheduled on the running event loop.
+        """
         for handler in self._event_handlers.get(event, []):
             try:
-                handler(*args)
+                result = handler(*args)
+                if inspect.isawaitable(result):
+                    asyncio.get_running_loop().create_task(result)
+            except RuntimeError:
+                pass  # No running loop — skip async handler
             except Exception:
                 logger.error("Error in event handler for '%s'", event, exc_info=True)
 
@@ -192,6 +205,7 @@ class XTBWebSocketClient:
         self._update_status(SocketStatus.CONNECTED)
         self._reconnect_delay = 1.0
         self._reconnecting = False
+        self._reconnect_attempts = 0
         self._start_ping()
         self._start_listen()
         self._emit("connected")
@@ -247,7 +261,7 @@ class XTBWebSocketClient:
 
     def disconnect(self) -> None:
         """Disconnect from the WebSocket server."""
-        self._config.auto_reconnect = False
+        self._intentional_disconnect = True
         if self._ws:
             self._update_status(SocketStatus.DISCONNECTING)
             try:
@@ -265,7 +279,7 @@ class XTBWebSocketClient:
 
     async def disconnect_async(self) -> None:
         """Async disconnect from the WebSocket server."""
-        self._config.auto_reconnect = False
+        self._intentional_disconnect = True
         if self._ws:
             self._update_status(SocketStatus.DISCONNECTING)
             with contextlib.suppress(Exception):
@@ -793,7 +807,7 @@ class XTBWebSocketClient:
                 self._cleanup()
                 self._update_status(SocketStatus.CLOSED)
                 self._emit("disconnected", e.code, str(e.reason))
-                if self._config.auto_reconnect and not self._reconnecting:
+                if self._config.auto_reconnect and not self._reconnecting and not self._intentional_disconnect:
                     asyncio.get_running_loop().create_task(self._schedule_reconnect())
             except Exception as e:
                 self._emit("error", e)
@@ -805,8 +819,18 @@ class XTBWebSocketClient:
 
         If an AuthManager is available, obtains a fresh service ticket
         for re-authentication instead of reusing the (possibly stale) original.
+
+        Raises ReconnectionError after max_reconnect_attempts failures.
         """
         self._reconnecting = True
+        self._reconnect_attempts += 1
+
+        if self._reconnect_attempts > self._max_reconnect_attempts:
+            self._reconnecting = False
+            error = ReconnectionError(f"Exhausted {self._max_reconnect_attempts} reconnection attempts")
+            self._emit("error", error)
+            return
+
         await asyncio.sleep(self._reconnect_delay)
         self._reconnect_delay = min(
             self._reconnect_delay * 1.5,
@@ -822,7 +846,7 @@ class XTBWebSocketClient:
             else:
                 await self.connect()
         except Exception as e:
-            logger.warning("Reconnection failed: %s", e)
+            logger.warning("Reconnection attempt %d failed: %s", self._reconnect_attempts, e)
             self._reconnecting = False
             if self._config.auto_reconnect:
                 asyncio.get_running_loop().create_task(self._schedule_reconnect())
