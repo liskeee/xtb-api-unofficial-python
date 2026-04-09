@@ -110,7 +110,10 @@ class TestWSClientEvents:
         client = XTBWebSocketClient(config)
 
         results = []
-        handler = lambda d: results.append(d)
+
+        def handler(d):
+            results.append(d)
+
         client.on("event", handler)
         client.off("event", handler)
 

@@ -67,12 +67,12 @@ class BrowserCASAuth:
         """
         try:
             from playwright.async_api import async_playwright
-        except ImportError:
+        except ImportError as e:
             raise CASError(
                 "BROWSER_AUTH_MISSING_DEPENDENCY",
                 "Playwright is required for browser auth. "
                 "Install with: pip install playwright && playwright install chromium",
-            )
+            ) from e
 
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(
@@ -195,9 +195,9 @@ class BrowserCASAuth:
         # Wait for TGT from network response interceptor
         try:
             await asyncio.wait_for(self._tgt_event.wait(), timeout=30)
-        except TimeoutError:
+        except TimeoutError as e:
             await self.close()
-            raise CASError("BROWSER_AUTH_OTP_TIMEOUT", "Timed out waiting for TGT after OTP submission")
+            raise CASError("BROWSER_AUTH_OTP_TIMEOUT", "Timed out waiting for TGT after OTP submission") from e
 
         tgt = self._tgt
         await self.close()
@@ -253,7 +253,8 @@ class BrowserCASAuth:
                     self._login_ticket = body.get("ticket") or body.get("loginTicket") or body.get("sessionId") or ""
                     self._two_factor_info = body
                     self._two_factor_detected.set()
-                    logger.info("2FA required — login_ticket: %s", self._login_ticket[:30] if self._login_ticket else "?")
+                    ticket_preview = self._login_ticket[:30] if self._login_ticket else "?"
+                    logger.info("2FA required — login_ticket: %s", ticket_preview)
                     return
 
             # Check for CASTGT cookie in any response

@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import stat
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -161,7 +163,7 @@ class AuthManager:
             logger.info("REST CAS login failed (%s), trying browser fallback", e.code)
             return await self._cas.login_with_browser(self._email, self._password)
         except Exception as e:
-            # WAF often returns HTML instead of JSON → aiohttp ContentTypeError
+            # WAF often returns HTML instead of JSON → httpx decode error
             logger.info("REST CAS login failed (%s), trying browser fallback", e)
             return await self._cas.login_with_browser(self._email, self._password)
 
@@ -254,7 +256,7 @@ class AuthManager:
             return None
 
     def _save_session_file(self, tgt: str, expires_at: float) -> None:
-        """Save TGT to session file as JSON."""
+        """Save TGT to session file as JSON with restricted permissions (0600)."""
         if not self._session_file:
             return
 
@@ -268,7 +270,17 @@ class AuthManager:
         }
 
         self._session_file.parent.mkdir(parents=True, exist_ok=True)
-        self._session_file.write_text(json.dumps(data, indent=2))
+        content = json.dumps(data, indent=2)
+        # Write with owner-only permissions to protect the TGT
+        fd = os.open(
+            str(self._session_file),
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            stat.S_IRUSR | stat.S_IWUSR,  # 0600
+        )
+        try:
+            os.write(fd, content.encode())
+        finally:
+            os.close(fd)
 
     @staticmethod
     def _is_tgt_fresh(expires_at: float) -> bool:

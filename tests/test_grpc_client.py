@@ -3,13 +3,13 @@
 import base64
 import struct
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
-from xtb_api.exceptions import AuthenticationError, ProtocolError
-from xtb_api.grpc.client import GrpcClient, _JWT_VALIDITY_SEC
+from xtb_api.exceptions import AuthenticationError
+from xtb_api.grpc.client import GrpcClient
 from xtb_api.grpc.proto import SIDE_BUY, SIDE_SELL
 
 

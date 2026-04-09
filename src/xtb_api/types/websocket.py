@@ -146,4 +146,4 @@ CASLoginResult = CASLoginSuccess | CASLoginTwoFactorRequired
 
 
 # Backward-compatible re-export — canonical location is xtb_api.exceptions
-from xtb_api.exceptions import CASError as CASError  # noqa: F401
+from xtb_api.exceptions import CASError as CASError  # noqa: E402, F401

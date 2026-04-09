@@ -47,26 +47,61 @@ def encode_field_bytes(field_num: int, data: bytes) -> bytes:
     return encode_varint(tag) + encode_varint(len(data)) + data
 
 
-def build_new_market_order(instrument_id: int, volume: int, side: int) -> bytes:
+def _encode_price(value: int, scale: int) -> bytes:
+    """Encode a Price protobuf sub-message: { field 1: value, field 2: scale }."""
+    return encode_field_varint(1, value) + encode_field_varint(2, scale)
+
+
+def build_new_market_order(
+    instrument_id: int,
+    volume: int,
+    side: int,
+    *,
+    stop_loss_value: int | None = None,
+    stop_loss_scale: int | None = None,
+    take_profit_value: int | None = None,
+    take_profit_scale: int | None = None,
+) -> bytes:
     """Build NewMarketOrder protobuf message.
 
     Args:
         instrument_id: gRPC instrument ID (e.g., 9438 for CIG.PL)
         volume: Number of shares
         side: 1=BUY, 2=SELL
+        stop_loss_value: SL price as integer (e.g., 10850 for 1.0850 with scale=4)
+        stop_loss_scale: SL price scale (decimal places)
+        take_profit_value: TP price as integer
+        take_profit_scale: TP price scale (decimal places)
 
     Returns:
         Serialized protobuf bytes
 
     Wire format (from HAR analysis):
         Field 1 (varint): instrument_id
-        Field 2 (bytes):  order { Field 2 (bytes): volume { Field 1 (varint): value } }
+        Field 2 (bytes):  order {
+            Field 2 (bytes): volume { Field 1 (varint): value }
+            Field 3 (bytes): stoploss { Field 1 (bytes): price { value, scale } }
+            Field 4 (bytes): takeprofit { Field 1 (bytes): price { value, scale } }
+        }
         Field 3 (varint): side
     """
     # Inner: volume message — field 1 = value
     volume_msg = encode_field_varint(1, volume)
     # Middle: order message — field 2 = volume
     order_msg = encode_field_bytes(2, volume_msg)
+
+    # Optional SL: order field 3 = stoploss { field 1 = price { value, scale } }
+    if stop_loss_value is not None and stop_loss_scale is not None:
+        price_msg = _encode_price(stop_loss_value, stop_loss_scale)
+        sl_msg = encode_field_bytes(1, price_msg)  # stoploss.price
+        order_msg += encode_field_bytes(3, sl_msg)
+
+    # Optional TP: order field 4 = takeprofit { field 1 = price { value, scale } }
+    if take_profit_value is not None and take_profit_scale is not None:
+        price_msg = _encode_price(take_profit_value, take_profit_scale)
+        tp_msg = encode_field_bytes(1, price_msg)  # takeprofit.price
+        order_msg += encode_field_bytes(4, tp_msg)
+
     # Outer: full message
     return (
         encode_field_varint(1, instrument_id)

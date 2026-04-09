@@ -22,6 +22,7 @@ from xtb_api.grpc.proto import SIDE_BUY, SIDE_SELL
 from xtb_api.types.instrument import InstrumentSearchResult, Quote
 from xtb_api.types.trading import AccountBalance, PendingOrder, Position, TradeOptions, TradeResult
 from xtb_api.types.websocket import WSClientConfig
+from xtb_api.utils import price_from_decimal
 from xtb_api.ws.ws_client import XTBWebSocketClient
 
 logger = logging.getLogger(__name__)
@@ -317,16 +318,37 @@ class XTBClient:
 
         instrument_id = await self._resolve_instrument_id(symbol)
 
-        side_str = "buy" if side == SIDE_BUY else "sell"
+        # Merge flat kwargs into TradeOptions
+        effective_sl = (options.stop_loss if options else None) or stop_loss
+        effective_tp = (options.take_profit if options else None) or take_profit
 
-        result = await grpc.execute_order(instrument_id, volume, side)
+        # Convert SL/TP floats to protobuf price (value, scale)
+        sl_value = sl_scale = tp_value = tp_scale = None
+        if effective_sl is not None:
+            p = price_from_decimal(effective_sl, 5)
+            sl_value, sl_scale = p.value, p.scale
+        if effective_tp is not None:
+            p = price_from_decimal(effective_tp, 5)
+            tp_value, tp_scale = p.value, p.scale
 
-        if not result.success:
-            # Retry once with fresh JWT
+        result = await grpc.execute_order(
+            instrument_id, volume, side,
+            stop_loss_value=sl_value, stop_loss_scale=sl_scale,
+            take_profit_value=tp_value, take_profit_scale=tp_scale,
+        )
+
+        # Retry ONLY on auth error (RBAC/expired JWT), not on trade rejection
+        if not result.success and result.error and "RBAC" in result.error:
+            logger.info("RBAC error, refreshing JWT and retrying...")
             grpc._jwt = None
             grpc._jwt_timestamp = 0.0
-            result = await grpc.execute_order(instrument_id, volume, side)
+            result = await grpc.execute_order(
+                instrument_id, volume, side,
+                stop_loss_value=sl_value, stop_loss_scale=sl_scale,
+                take_profit_value=tp_value, take_profit_scale=tp_scale,
+            )
 
+        side_str = "buy" if side == SIDE_BUY else "sell"
         return TradeResult(
             success=result.success,
             symbol=symbol,

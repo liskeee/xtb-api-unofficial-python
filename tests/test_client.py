@@ -1,6 +1,5 @@
 """Tests for high-level XTB client."""
 
-import pytest
 
 from xtb_api.client import XTBClient
 from xtb_api.types.trading import TradeOptions
@@ -69,7 +68,9 @@ class TestXTBClientEvents:
         )
 
         received = []
-        handler = lambda data: received.append(data)
+
+        def handler(data):
+            received.append(data)
         client.on("tick", handler)
         client.ws._emit("tick", {"symbol": "EURUSD"})
         assert received == [{"symbol": "EURUSD"}]

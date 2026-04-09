@@ -157,16 +157,50 @@ class GrpcClient:
             return self._jwt
         return await self.get_jwt()
 
-    async def buy(self, instrument_id: int, volume: int) -> GrpcTradeResult:
+    async def buy(
+        self,
+        instrument_id: int,
+        volume: int,
+        *,
+        stop_loss_value: int | None = None,
+        stop_loss_scale: int | None = None,
+        take_profit_value: int | None = None,
+        take_profit_scale: int | None = None,
+    ) -> GrpcTradeResult:
         """Execute BUY market order."""
-        return await self.execute_order(instrument_id, volume, SIDE_BUY)
+        return await self.execute_order(
+            instrument_id, volume, SIDE_BUY,
+            stop_loss_value=stop_loss_value, stop_loss_scale=stop_loss_scale,
+            take_profit_value=take_profit_value, take_profit_scale=take_profit_scale,
+        )
 
-    async def sell(self, instrument_id: int, volume: int) -> GrpcTradeResult:
+    async def sell(
+        self,
+        instrument_id: int,
+        volume: int,
+        *,
+        stop_loss_value: int | None = None,
+        stop_loss_scale: int | None = None,
+        take_profit_value: int | None = None,
+        take_profit_scale: int | None = None,
+    ) -> GrpcTradeResult:
         """Execute SELL market order."""
-        return await self.execute_order(instrument_id, volume, SIDE_SELL)
+        return await self.execute_order(
+            instrument_id, volume, SIDE_SELL,
+            stop_loss_value=stop_loss_value, stop_loss_scale=stop_loss_scale,
+            take_profit_value=take_profit_value, take_profit_scale=take_profit_scale,
+        )
 
     async def execute_order(
-        self, instrument_id: int, volume: int, side: int
+        self,
+        instrument_id: int,
+        volume: int,
+        side: int,
+        *,
+        stop_loss_value: int | None = None,
+        stop_loss_scale: int | None = None,
+        take_profit_value: int | None = None,
+        take_profit_scale: int | None = None,
     ) -> GrpcTradeResult:
         """Execute market order via gRPC-web NewMarketOrder.
 
@@ -174,6 +208,10 @@ class GrpcClient:
             instrument_id: gRPC instrument ID (e.g., 9438 for CIG.PL)
             volume: Number of shares
             side: SIDE_BUY (1) or SIDE_SELL (2)
+            stop_loss_value: SL price as integer (e.g., 10850 for 1.0850 with scale=4)
+            stop_loss_scale: SL price scale (decimal places)
+            take_profit_value: TP price as integer
+            take_profit_scale: TP price scale (decimal places)
 
         Returns:
             GrpcTradeResult with success status and order details.
@@ -185,7 +223,11 @@ class GrpcClient:
             "gRPC trade: %s instrument=%d volume=%d", side_name, instrument_id, volume
         )
 
-        proto_msg = build_new_market_order(instrument_id, volume, side)
+        proto_msg = build_new_market_order(
+            instrument_id, volume, side,
+            stop_loss_value=stop_loss_value, stop_loss_scale=stop_loss_scale,
+            take_profit_value=take_profit_value, take_profit_scale=take_profit_scale,
+        )
         body_b64 = build_grpc_web_text_body(proto_msg)
 
         try:

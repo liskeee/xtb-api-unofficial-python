@@ -156,8 +156,8 @@ class XTBWebSocketClient:
         for handler in self._event_handlers.get(event, []):
             try:
                 handler(*args)
-            except Exception as e:
-                logger.error(f"Error in event handler for '{event}': {e}")
+            except Exception:
+                logger.error("Error in event handler for '%s'", event, exc_info=True)
 
     # ─── Connection ───
 
@@ -254,7 +254,11 @@ class XTBWebSocketClient:
         self._config.auto_reconnect = False
         if self._ws:
             self._update_status(SocketStatus.DISCONNECTING)
-            asyncio.get_event_loop().create_task(self._close_ws())
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._close_ws())
+            except RuntimeError:
+                pass  # No running loop — ws will be cleaned up below
         self._cleanup()
 
     async def _close_ws(self) -> None:
@@ -310,7 +314,7 @@ class XTBWebSocketClient:
             "command": [{"CoreAPI": core_api}],
         }
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future: asyncio.Future[WSResponse] = loop.create_future()
         self._pending_requests[req_id] = future
 
@@ -574,7 +578,7 @@ class XTBWebSocketClient:
 
         all_symbols = parse_instruments(self._extract_elements(res))
         self._symbols_cache = all_symbols
-        logger.info(f"Cached {len(all_symbols)} instruments for instant search")
+        logger.info("Cached %d instruments for instant search", len(all_symbols))
 
         query_lower = query.lower()
         return [
@@ -607,6 +611,9 @@ class XTBWebSocketClient:
             try:
                 res = await self.subscribe_ticks(key)
                 quote = parse_quote(self._extract_elements(res), symbol)
+                # Unsubscribe to avoid leaking subscriptions
+                with contextlib.suppress(Exception):
+                    await self.unsubscribe_ticks(key)
                 if quote:
                     return quote
             except Exception:
@@ -780,7 +787,7 @@ class XTBWebSocketClient:
                 except Exception:
                     pass
 
-        self._ping_task = asyncio.get_event_loop().create_task(ping_loop())
+        self._ping_task = asyncio.get_running_loop().create_task(ping_loop())
 
     def _stop_ping(self) -> None:
         """Stop ping keepalive task."""
@@ -805,11 +812,11 @@ class XTBWebSocketClient:
                 self._update_status(SocketStatus.CLOSED)
                 self._emit("disconnected", e.code, str(e.reason))
                 if self._config.auto_reconnect and not self._reconnecting:
-                    asyncio.get_event_loop().create_task(self._schedule_reconnect())
+                    asyncio.get_running_loop().create_task(self._schedule_reconnect())
             except Exception as e:
                 self._emit("error", e)
 
-        self._listen_task = asyncio.get_event_loop().create_task(listen_loop())
+        self._listen_task = asyncio.get_running_loop().create_task(listen_loop())
 
     async def _schedule_reconnect(self) -> None:
         """Schedule reconnection with exponential backoff.
@@ -834,8 +841,9 @@ class XTBWebSocketClient:
                 await self.connect()
         except Exception as e:
             logger.warning("Reconnection failed: %s", e)
-            if self._config.auto_reconnect and not self._reconnecting:
-                asyncio.get_event_loop().create_task(self._schedule_reconnect())
+            self._reconnecting = False
+            if self._config.auto_reconnect:
+                asyncio.get_running_loop().create_task(self._schedule_reconnect())
 
     def _cleanup(self) -> None:
         """Clean up connection resources."""
@@ -846,7 +854,7 @@ class XTBWebSocketClient:
 
         for _req_id, future in self._pending_requests.items():
             if not future.done():
-                future.set_exception(RuntimeError("Connection closed"))
+                future.set_exception(XTBConnectionError("Connection closed"))
         self._pending_requests.clear()
         self._ws = None
         self._authenticated = False

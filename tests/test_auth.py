@@ -106,8 +106,7 @@ class TestCASClient:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.is_closed = False
 
         with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client._login_v2("test@example.com", "password123")
@@ -133,8 +132,7 @@ class TestCASClient:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.is_closed = False
 
         with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client._login_v2("test@example.com", "password123")
@@ -161,8 +159,7 @@ class TestCASClient:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.is_closed = False
 
         with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client._login_v2("test@example.com", "password123")
@@ -183,12 +180,13 @@ class TestCASClient:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.is_closed = False
 
-        with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(CASError) as exc_info:
-                await client._login_v2("wrong@example.com", "wrongpassword")
+        with (
+            patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client),
+            pytest.raises(CASError) as exc_info,
+        ):
+            await client._login_v2("wrong@example.com", "wrongpassword")
 
         assert exc_info.value.code == "CAS_GET_TGT_UNAUTHORIZED"
 
@@ -204,8 +202,7 @@ class TestCASClient:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.is_closed = False
 
         with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client.get_service_ticket("TGT-xxx", "xapi5")
@@ -225,12 +222,13 @@ class TestCASClient:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.is_closed = False
 
-        with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(CASError) as exc_info:
-                await client.get_service_ticket("TGT-expired", "xapi5")
+        with (
+            patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client),
+            pytest.raises(CASError) as exc_info,
+        ):
+            await client.get_service_ticket("TGT-expired", "xapi5")
 
         assert exc_info.value.code == "CAS_TGT_EXPIRED"
 
@@ -246,12 +244,13 @@ class TestCASClient:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.is_closed = False
 
-        with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(CASError) as exc_info:
-                await client.get_service_ticket("TGT-xxx", "xapi5")
+        with (
+            patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client),
+            pytest.raises(CASError) as exc_info,
+        ):
+            await client.get_service_ticket("TGT-xxx", "xapi5")
 
         assert exc_info.value.code == "CAS_INVALID_SERVICE_TICKET"
 
@@ -272,8 +271,7 @@ class TestCASClient:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.is_closed = False
 
         with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client.login_with_two_factor(
@@ -307,8 +305,7 @@ class TestCASClient:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.is_closed = False
 
         with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client.login_with_two_factor("MID-123--abc", "123456")
@@ -330,8 +327,7 @@ class TestCASClient:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.is_closed = False
 
         with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client.login_with_two_factor(
