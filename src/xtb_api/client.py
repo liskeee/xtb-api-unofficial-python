@@ -332,9 +332,13 @@ class XTBClient:
             tp_value, tp_scale = p.value, p.scale
 
         result = await grpc.execute_order(
-            instrument_id, volume, side,
-            stop_loss_value=sl_value, stop_loss_scale=sl_scale,
-            take_profit_value=tp_value, take_profit_scale=tp_scale,
+            instrument_id,
+            volume,
+            side,
+            stop_loss_value=sl_value,
+            stop_loss_scale=sl_scale,
+            take_profit_value=tp_value,
+            take_profit_scale=tp_scale,
         )
 
         # Retry ONLY on auth error (RBAC/expired JWT), not on trade rejection
@@ -343,9 +347,13 @@ class XTBClient:
             grpc._jwt = None
             grpc._jwt_timestamp = 0.0
             result = await grpc.execute_order(
-                instrument_id, volume, side,
-                stop_loss_value=sl_value, stop_loss_scale=sl_scale,
-                take_profit_value=tp_value, take_profit_scale=tp_scale,
+                instrument_id,
+                volume,
+                side,
+                stop_loss_value=sl_value,
+                stop_loss_scale=sl_scale,
+                take_profit_value=tp_value,
+                take_profit_scale=tp_scale,
             )
 
         side_str = "buy" if side == SIDE_BUY else "sell"

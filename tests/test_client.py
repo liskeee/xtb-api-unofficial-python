@@ -1,6 +1,5 @@
 """Tests for high-level XTB client."""
 
-
 from xtb_api.client import XTBClient
 from xtb_api.types.trading import TradeOptions
 
@@ -71,6 +70,7 @@ class TestXTBClientEvents:
 
         def handler(data):
             received.append(data)
+
         client.on("tick", handler)
         client.ws._emit("tick", {"symbol": "EURUSD"})
         assert received == [{"symbol": "EURUSD"}]
@@ -90,6 +90,7 @@ class TestXTBClientUtils:
             Xs6Side,
             XTBClient,
         )
+
         assert XTBClient is not None
         assert Xs6Side.BUY == 0
         assert SocketStatus.CONNECTED == "CONNECTED"

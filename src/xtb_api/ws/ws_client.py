@@ -221,9 +221,7 @@ class XTBWebSocketClient:
                     auth.credentials.email, auth.credentials.password
                 )
             else:
-                login_result = await self._cas_client.login(
-                    auth.credentials.email, auth.credentials.password
-                )
+                login_result = await self._cas_client.login(auth.credentials.email, auth.credentials.password)
 
             if isinstance(login_result, CASLoginTwoFactorRequired):
                 self._emit(
@@ -238,9 +236,7 @@ class XTBWebSocketClient:
                 )
                 return  # Wait for 2FA completion
 
-            ticket_result = await self._cas_client.get_service_ticket(
-                login_result.tgt, "xapi5"
-            )
+            ticket_result = await self._cas_client.get_service_ticket(login_result.tgt, "xapi5")
             service_ticket = ticket_result.service_ticket
         else:
             raise AuthenticationError("No valid authentication method provided")
@@ -278,9 +274,7 @@ class XTBWebSocketClient:
 
     # ─── Send Commands ───
 
-    async def send(
-        self, command_name: str, payload: dict[str, Any], timeout_ms: int = 10000
-    ) -> WSResponse:
+    async def send(self, command_name: str, payload: dict[str, Any], timeout_ms: int = 10000) -> WSResponse:
         """Send a raw CoreAPI command and wait for response.
 
         Args:
@@ -470,9 +464,7 @@ class XTBWebSocketClient:
             self._browser_auth_active = False
         else:
             ticket = login_ticket or session_id or ""
-            two_factor_result = await self._cas_client.login_with_two_factor(
-                ticket, code, two_factor_auth_type
-            )
+            two_factor_result = await self._cas_client.login_with_two_factor(ticket, code, two_factor_auth_type)
 
         if isinstance(two_factor_result, CASLoginTwoFactorRequired):
             self._emit(
@@ -487,9 +479,7 @@ class XTBWebSocketClient:
             )
             return
 
-        ticket_result = await self._cas_client.get_service_ticket(
-            two_factor_result.tgt, "xapi5"
-        )
+        ticket_result = await self._cas_client.get_service_ticket(two_factor_result.tgt, "xapi5")
         await self.register_client_info()
         await self.login_with_service_ticket(ticket_result.service_ticket)
 
@@ -536,18 +526,14 @@ class XTBWebSocketClient:
 
         return parse_orders(self._extract_elements(res))
 
-    async def buy(
-        self, symbol: str, volume: int, options: TradeOptions | None = None
-    ) -> TradeResult:
+    async def buy(self, symbol: str, volume: int, options: TradeOptions | None = None) -> TradeResult:
         """Execute a BUY order.
 
         ⚠️ WARNING: This executes real trades. Always test on demo accounts first.
         """
         return await self._execute_trade(symbol, volume, Xs6Side.BUY, options)
 
-    async def sell(
-        self, symbol: str, volume: int, options: TradeOptions | None = None
-    ) -> TradeResult:
+    async def sell(self, symbol: str, volume: int, options: TradeOptions | None = None) -> TradeResult:
         """Execute a SELL order.
 
         ⚠️ WARNING: This executes real trades. Always test on demo accounts first.
@@ -584,9 +570,7 @@ class XTBWebSocketClient:
         return [
             s
             for s in all_symbols
-            if query_lower in s.symbol.lower()
-            or query_lower in s.name.lower()
-            or query_lower in s.description.lower()
+            if query_lower in s.symbol.lower() or query_lower in s.name.lower() or query_lower in s.description.lower()
         ][:100]
 
     def get_account_number(self) -> int:
@@ -804,9 +788,7 @@ class XTBWebSocketClient:
             try:
                 async for message in self._ws:
                     if isinstance(message, (str, bytes)):
-                        self._handle_message(
-                            message if isinstance(message, str) else message.decode()
-                        )
+                        self._handle_message(message if isinstance(message, str) else message.decode())
             except websockets.exceptions.ConnectionClosed as e:
                 self._cleanup()
                 self._update_status(SocketStatus.CLOSED)

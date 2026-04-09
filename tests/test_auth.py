@@ -330,9 +330,7 @@ class TestCASClient:
         mock_client.is_closed = False
 
         with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
-            result = await client.login_with_two_factor(
-                "", "654321", session_id="old-session-id"
-            )
+            result = await client.login_with_two_factor("", "654321", session_id="old-session-id")
 
         assert isinstance(result, CASLoginSuccess)
         payload = mock_client.post.call_args[1]["json"]

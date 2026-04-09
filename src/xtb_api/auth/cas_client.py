@@ -22,12 +22,14 @@ from xtb_api.types.websocket import (
 
 class CASServiceTicketResult(BaseModel):
     """Result from service ticket request."""
+
     service_ticket: str
     service: str
 
 
 class CASClientConfig(BaseModel):
     """CAS client configuration."""
+
     base_url: str = "https://xstation.xtb.com/signon/"
     timezone_offset: str | None = None
     user_agent: str = "xStation5/2.94.1 (Linux x86_64)"
@@ -180,6 +182,7 @@ class CASClient:
                 )
 
             import re
+
             match = re.search(r"/tickets/([^/]+)$", location)
             if not match:
                 raise CASError(
@@ -267,7 +270,7 @@ class CASClient:
             for part in set_cookie.split(";"):
                 part = part.strip()
                 if part.startswith("CASTGT="):
-                    tgt = part[len("CASTGT="):]
+                    tgt = part[len("CASTGT=") :]
                     break
 
         if result.get("loginPhase") == "TGT_CREATED" and tgt:
@@ -292,9 +295,7 @@ class CASClient:
             f"Unexpected 2FA response: {result}",
         )
 
-    async def get_service_ticket(
-        self, tgt: str, service: str = "xapi5"
-    ) -> CASServiceTicketResult:
+    async def get_service_ticket(self, tgt: str, service: str = "xapi5") -> CASServiceTicketResult:
         """Get Service Ticket using TGT via CAS v1 endpoint.
 
         Args:
@@ -306,9 +307,7 @@ class CASClient:
         """
         return await self._get_service_ticket_v1(tgt, service)
 
-    async def _get_service_ticket_v1(
-        self, tgt: str, service: str
-    ) -> CASServiceTicketResult:
+    async def _get_service_ticket_v1(self, tgt: str, service: str) -> CASServiceTicketResult:
         """Get Service Ticket via CAS v1 endpoint."""
         url = f"{self._config.base_url}v1/tickets/{tgt}"
 
@@ -338,13 +337,9 @@ class CASClient:
                 f"Invalid service ticket received: {service_ticket}",
             )
 
-        return CASServiceTicketResult(
-            service_ticket=service_ticket, service=service
-        )
+        return CASServiceTicketResult(service_ticket=service_ticket, service=service)
 
-    async def get_service_ticket_v2(
-        self, tgt: str, service: str = "xapi5"
-    ) -> CASServiceTicketResult:
+    async def get_service_ticket_v2(self, tgt: str, service: str = "xapi5") -> CASServiceTicketResult:
         """Get Service Ticket via CAS v2 endpoint (alternative method)."""
         url = f"{self._config.base_url}v2/serviceTicket"
 
@@ -378,13 +373,9 @@ class CASClient:
                 f"Invalid service ticket received: {service_ticket}",
             )
 
-        return CASServiceTicketResult(
-            service_ticket=service_ticket, service=service
-        )
+        return CASServiceTicketResult(service_ticket=service_ticket, service=service)
 
-    async def refresh_service_ticket(
-        self, tgt: str, service: str = "xapi5"
-    ) -> str:
+    async def refresh_service_ticket(self, tgt: str, service: str = "xapi5") -> str:
         """Refresh service ticket using existing TGT.
 
         Service tickets are single-use and expire after 2-5 minutes.
@@ -407,9 +398,7 @@ class CASClient:
             return login_result.tgt
         return None
 
-    async def login_with_browser(
-        self, email: str, password: str, *, headless: bool = True
-    ) -> CASLoginResult:
+    async def login_with_browser(self, email: str, password: str, *, headless: bool = True) -> CASLoginResult:
         """Login using browser-based authentication (Playwright).
 
         Bypasses Akamai WAF by using a real browser to perform the login flow.

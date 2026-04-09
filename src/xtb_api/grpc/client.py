@@ -169,9 +169,13 @@ class GrpcClient:
     ) -> GrpcTradeResult:
         """Execute BUY market order."""
         return await self.execute_order(
-            instrument_id, volume, SIDE_BUY,
-            stop_loss_value=stop_loss_value, stop_loss_scale=stop_loss_scale,
-            take_profit_value=take_profit_value, take_profit_scale=take_profit_scale,
+            instrument_id,
+            volume,
+            SIDE_BUY,
+            stop_loss_value=stop_loss_value,
+            stop_loss_scale=stop_loss_scale,
+            take_profit_value=take_profit_value,
+            take_profit_scale=take_profit_scale,
         )
 
     async def sell(
@@ -186,9 +190,13 @@ class GrpcClient:
     ) -> GrpcTradeResult:
         """Execute SELL market order."""
         return await self.execute_order(
-            instrument_id, volume, SIDE_SELL,
-            stop_loss_value=stop_loss_value, stop_loss_scale=stop_loss_scale,
-            take_profit_value=take_profit_value, take_profit_scale=take_profit_scale,
+            instrument_id,
+            volume,
+            SIDE_SELL,
+            stop_loss_value=stop_loss_value,
+            stop_loss_scale=stop_loss_scale,
+            take_profit_value=take_profit_value,
+            take_profit_scale=take_profit_scale,
         )
 
     async def execute_order(
@@ -219,21 +227,21 @@ class GrpcClient:
         jwt = await self._ensure_jwt()
 
         side_name = "BUY" if side == SIDE_BUY else "SELL"
-        logger.info(
-            "gRPC trade: %s instrument=%d volume=%d", side_name, instrument_id, volume
-        )
+        logger.info("gRPC trade: %s instrument=%d volume=%d", side_name, instrument_id, volume)
 
         proto_msg = build_new_market_order(
-            instrument_id, volume, side,
-            stop_loss_value=stop_loss_value, stop_loss_scale=stop_loss_scale,
-            take_profit_value=take_profit_value, take_profit_scale=take_profit_scale,
+            instrument_id,
+            volume,
+            side,
+            stop_loss_value=stop_loss_value,
+            stop_loss_scale=stop_loss_scale,
+            take_profit_value=take_profit_value,
+            take_profit_scale=take_profit_scale,
         )
         body_b64 = build_grpc_web_text_body(proto_msg)
 
         try:
-            response_bytes = await self._grpc_call(
-                GRPC_NEW_ORDER_ENDPOINT, body_b64, jwt=jwt
-            )
+            response_bytes = await self._grpc_call(GRPC_NEW_ORDER_ENDPOINT, body_b64, jwt=jwt)
         except Exception as e:
             return GrpcTradeResult(success=False, error=str(e))
 
@@ -250,9 +258,7 @@ class GrpcClient:
         response_text = response_bytes.decode("latin-1", errors="replace")
 
         # Success: grpc-status 0 or data frame (0x00 prefix)
-        if "grpc-status: 0" in response_text or (
-            len(response_bytes) > 5 and response_bytes[0] == 0
-        ):
+        if "grpc-status: 0" in response_text or (len(response_bytes) > 5 and response_bytes[0] == 0):
             uuid_match = re.search(
                 r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
                 response_text,
@@ -277,9 +283,7 @@ class GrpcClient:
             grpc_status = int(status_match.group(1))
 
         logger.error(error_msg)
-        return GrpcTradeResult(
-            success=False, grpc_status=grpc_status, error=error_msg
-        )
+        return GrpcTradeResult(success=False, grpc_status=grpc_status, error=error_msg)
 
     async def disconnect(self) -> None:
         """Clean up resources."""

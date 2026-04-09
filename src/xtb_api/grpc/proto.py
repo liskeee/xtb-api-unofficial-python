@@ -103,11 +103,7 @@ def build_new_market_order(
         order_msg += encode_field_bytes(4, tp_msg)
 
     # Outer: full message
-    return (
-        encode_field_varint(1, instrument_id)
-        + encode_field_bytes(2, order_msg)
-        + encode_field_varint(3, side)
-    )
+    return encode_field_varint(1, instrument_id) + encode_field_bytes(2, order_msg) + encode_field_varint(3, side)
 
 
 def build_grpc_frame(proto_msg: bytes) -> bytes:
@@ -125,9 +121,7 @@ def build_grpc_web_text_body(proto_msg: bytes) -> str:
     return base64.b64encode(frame).decode("ascii")
 
 
-def build_create_access_token_request(
-    tgt: str, account_number: str, account_server: str
-) -> bytes:
+def build_create_access_token_request(tgt: str, account_number: str, account_server: str) -> bytes:
     """Build CreateAccessTokenRequest protobuf.
 
     Proto structure (discovered via proto classes in xStation5):
@@ -147,15 +141,9 @@ def build_create_access_token_request(
     """
     # Build inner Account message
     # account_number is varint-encoded (field type 0), not length-delimited
-    account_msg = (
-        encode_field_varint(1, int(account_number))
-        + encode_field_bytes(2, account_server.encode("utf-8"))
-    )
+    account_msg = encode_field_varint(1, int(account_number)) + encode_field_bytes(2, account_server.encode("utf-8"))
     # Build outer CreateAccessTokenRequest
-    return (
-        encode_field_bytes(1, tgt.encode("utf-8"))
-        + encode_field_bytes(2, account_msg)
-    )
+    return encode_field_bytes(1, tgt.encode("utf-8")) + encode_field_bytes(2, account_msg)
 
 
 def parse_grpc_frames(data: bytes) -> list[bytes]:
@@ -236,18 +224,14 @@ GRPC_WEB_TEXT_CONTENT_TYPE = "application/grpc-web-text"
 
 # gRPC-web endpoints
 GRPC_BASE_URL = "https://ipax.xtb.com"
-GRPC_AUTH_ENDPOINT = (
-    f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.auth.v2.AuthService/CreateAccessToken"
-)
+GRPC_AUTH_ENDPOINT = f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.auth.v2.AuthService/CreateAccessToken"
 GRPC_NEW_ORDER_ENDPOINT = (
-    f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.cashtradingneworder.v1"
-    ".CashTradingNewOrderService/NewMarketOrder"
+    f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.cashtradingneworder.v1.CashTradingNewOrderService/NewMarketOrder"
 )
 GRPC_CONFIRM_ENDPOINT = (
     f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.cashtradingconfirmation.v1"
     ".CashTradingConfirmationService/SubscribeNewMarketOrderConfirmation"
 )
 GRPC_CLOSE_POSITION_ENDPOINT = (
-    f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.cashtradingneworder.v1"
-    ".CashTradingNewOrderService/CloseSinglePosition"
+    f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.cashtradingneworder.v1.CashTradingNewOrderService/CloseSinglePosition"
 )

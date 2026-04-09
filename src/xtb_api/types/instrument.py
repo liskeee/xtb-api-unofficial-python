@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 class InstrumentSymbol(BaseModel):
     """Complete instrument symbol definition from XTB."""
+
     name: str
     quote_id: int
     instrument_id: int
@@ -23,6 +24,7 @@ class InstrumentSymbol(BaseModel):
 
 class Quote(BaseModel):
     """Real-time quote/tick data."""
+
     symbol: str
     ask: float
     bid: float
@@ -34,6 +36,7 @@ class Quote(BaseModel):
 
 class InstrumentSearchResult(BaseModel):
     """Instrument search result."""
+
     symbol: str
     instrument_id: int
     name: str

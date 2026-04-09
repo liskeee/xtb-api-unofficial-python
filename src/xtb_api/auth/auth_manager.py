@@ -167,9 +167,7 @@ class AuthManager:
             logger.info("REST CAS login failed (%s), trying browser fallback", e)
             return await self._cas.login_with_browser(self._email, self._password)
 
-    async def _handle_two_factor(
-        self, challenge: CASLoginTwoFactorRequired
-    ) -> CASLoginSuccess:
+    async def _handle_two_factor(self, challenge: CASLoginTwoFactorRequired) -> CASLoginSuccess:
         """Handle 2FA challenge using TOTP auto-generation or browser OTP."""
         code = self._generate_totp()
 
@@ -181,9 +179,7 @@ class AuthManager:
             # Try REST 2FA submission
             two_factor_type = "TOTP" if "TOTP" in challenge.methods else challenge.two_factor_auth_type
             try:
-                result = await self._cas.login_with_two_factor(
-                    challenge.login_ticket, code, two_factor_type
-                )
+                result = await self._cas.login_with_two_factor(challenge.login_ticket, code, two_factor_type)
             except Exception:
                 raise
 

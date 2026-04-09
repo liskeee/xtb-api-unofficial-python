@@ -12,6 +12,7 @@ from xtb_api.types.websocket import CASError, CASLoginSuccess, CASLoginTwoFactor
 
 # -- Helpers --
 
+
 def _make_success(tgt: str = "TGT-test-abc", hours: float = 8) -> CASLoginSuccess:
     return CASLoginSuccess(tgt=tgt, expires_at=time.time() + hours * 3600)
 
@@ -66,14 +67,16 @@ class TestGetTgt:
     @pytest.mark.asyncio
     async def test_loads_from_session_file(self, tmp_path):
         session_file = tmp_path / "session.json"
-        expires_at = datetime.fromtimestamp(
-            time.time() + 3600, tz=UTC
+        expires_at = datetime.fromtimestamp(time.time() + 3600, tz=UTC)
+        session_file.write_text(
+            json.dumps(
+                {
+                    "tgt": "TGT-from-file",
+                    "extracted_at": datetime.now(UTC).isoformat(),
+                    "expires_at": expires_at.isoformat(),
+                }
+            )
         )
-        session_file.write_text(json.dumps({
-            "tgt": "TGT-from-file",
-            "extracted_at": datetime.now(UTC).isoformat(),
-            "expires_at": expires_at.isoformat(),
-        }))
 
         mgr = AuthManager("a@b.com", "pw", session_file=session_file)
         tgt = await mgr.get_tgt()
@@ -82,14 +85,16 @@ class TestGetTgt:
     @pytest.mark.asyncio
     async def test_skips_expired_session_file(self, tmp_path):
         session_file = tmp_path / "session.json"
-        expires_at = datetime.fromtimestamp(
-            time.time() - 100, tz=UTC
+        expires_at = datetime.fromtimestamp(time.time() - 100, tz=UTC)
+        session_file.write_text(
+            json.dumps(
+                {
+                    "tgt": "TGT-old",
+                    "extracted_at": datetime.now(UTC).isoformat(),
+                    "expires_at": expires_at.isoformat(),
+                }
+            )
         )
-        session_file.write_text(json.dumps({
-            "tgt": "TGT-old",
-            "extracted_at": datetime.now(UTC).isoformat(),
-            "expires_at": expires_at.isoformat(),
-        }))
 
         mgr = AuthManager("a@b.com", "pw", session_file=session_file)
         with patch.object(mgr, "_login_with_fallback", new_callable=AsyncMock) as mock_login:
