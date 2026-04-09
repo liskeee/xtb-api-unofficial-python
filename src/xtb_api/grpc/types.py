@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pydantic import BaseModel
 
 
-@dataclass
-class GrpcTradeResult:
+class GrpcTradeResult(BaseModel):
     """Result of a gRPC-web trade execution."""
 
     success: bool

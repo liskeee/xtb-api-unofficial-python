@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from dataclasses import dataclass
+
+from pydantic import BaseModel
 
 from xtb_api.types.trading import IPrice, IVolume
 
@@ -36,8 +37,7 @@ def build_account_id(account_number: int, endpoint: str = "meta1") -> str:
     return f"{endpoint}_{account_number}"
 
 
-@dataclass
-class ParsedSymbolKey:
+class ParsedSymbolKey(BaseModel):
     """Parsed symbol key components."""
     asset_class_id: int
     symbol_name: str

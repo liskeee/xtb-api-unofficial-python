@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import hashlib
 import time
-from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import httpx
+from pydantic import BaseModel
 
 from xtb_api.types.websocket import (
     CASError,
@@ -20,15 +20,13 @@ from xtb_api.types.websocket import (
 )
 
 
-@dataclass
-class CASServiceTicketResult:
+class CASServiceTicketResult(BaseModel):
     """Result from service ticket request."""
     service_ticket: str
     service: str
 
 
-@dataclass
-class CASClientConfig:
+class CASClientConfig(BaseModel):
     """CAS client configuration."""
     base_url: str = "https://xstation.xtb.com/signon/"
     timezone_offset: str | None = None
