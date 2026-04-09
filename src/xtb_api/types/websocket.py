@@ -145,9 +145,5 @@ class CASLoginTwoFactorRequired(BaseModel):
 CASLoginResult = CASLoginSuccess | CASLoginTwoFactorRequired
 
 
-class CASError(Exception):
-    """CAS-specific error with error codes from XTB servers."""
-
-    def __init__(self, code: str, message: str) -> None:
-        self.code = code
-        super().__init__(message)
+# Backward-compatible re-export — canonical location is xtb_api.exceptions
+from xtb_api.exceptions import CASError as CASError  # noqa: F401

@@ -1,5 +1,18 @@
 """Unofficial Python client for XTB xStation5 trading platform."""
 
+from xtb_api.exceptions import (
+    AuthenticationError,
+    CASError,
+    InstrumentNotFoundError,
+    ProtocolError,
+    RateLimitError,
+    ReconnectionError,
+    TradeError,
+    XTBConnectionError,
+    XTBError,
+    XTBTimeoutError,
+)
+
 from xtb_api.auth.auth_manager import AuthManager
 from xtb_api.auth.cas_client import CASClient, CASClientConfig
 from xtb_api.auth.chrome_session import ChromeSession
@@ -33,7 +46,6 @@ from xtb_api.types.trading import (
     TradeResult,
 )
 from xtb_api.types.websocket import (
-    CASError,
     CASLoginResult,
     CASLoginSuccess,
     CASLoginTwoFactorRequired,
@@ -64,6 +76,17 @@ __all__ = [
     "XTBClient",
     "ClientMode",
     "XTBClientConfig",
+    # Exceptions
+    "XTBError",
+    "XTBConnectionError",
+    "AuthenticationError",
+    "CASError",
+    "ReconnectionError",
+    "TradeError",
+    "InstrumentNotFoundError",
+    "RateLimitError",
+    "XTBTimeoutError",
+    "ProtocolError",
     # Auth
     "AuthManager",
     "CASClient",

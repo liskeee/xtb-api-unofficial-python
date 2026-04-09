@@ -17,6 +17,13 @@ import websockets
 import websockets.asyncio.client
 
 from xtb_api.auth.cas_client import CASClient
+from xtb_api.exceptions import (
+    AuthenticationError,
+    InstrumentNotFoundError,
+    ProtocolError,
+    XTBConnectionError,
+    XTBTimeoutError,
+)
 from xtb_api.types.enums import SocketStatus, SubscriptionEid, Xs6Side
 from xtb_api.types.instrument import InstrumentSearchResult, Quote
 from xtb_api.types.trading import (
@@ -147,7 +154,7 @@ class XTBWebSocketClient:
             Exception: If connection or authentication fails
         """
         if self._ws is not None:
-            raise RuntimeError("Already connected or connecting")
+            raise XTBConnectionError("Already connected or connecting")
 
         await self._establish_connection()
 
@@ -221,7 +228,7 @@ class XTBWebSocketClient:
             )
             service_ticket = ticket_result.service_ticket
         else:
-            raise RuntimeError("No valid authentication method provided")
+            raise AuthenticationError("No valid authentication method provided")
 
         # Register client info then login
         await self.register_client_info()
@@ -274,7 +281,7 @@ class XTBWebSocketClient:
             TimeoutError: If request times out
         """
         if not self.is_connected or not self._ws:
-            raise RuntimeError("Not connected")
+            raise XTBConnectionError("Not connected")
 
         req_id = self._next_req_id(command_name)
 
@@ -301,7 +308,7 @@ class XTBWebSocketClient:
             return await asyncio.wait_for(future, timeout=timeout_ms / 1000)
         except TimeoutError:
             self._pending_requests.pop(req_id, None)
-            raise TimeoutError(f"Request {req_id} timed out")
+            raise XTBTimeoutError(f"Request {req_id} timed out")
 
     # ─── Subscriptions ───
 
@@ -377,17 +384,17 @@ class XTBWebSocketClient:
         # Parse login result
         resp_list = response.response or []
         if not resp_list:
-            raise RuntimeError("Login failed: empty response")
+            raise AuthenticationError("Login failed: empty response")
 
         first = resp_list[0] if resp_list else {}
         if not isinstance(first, dict):
-            raise RuntimeError("Login failed: unexpected response format")
+            raise ProtocolError("Login failed: unexpected response format")
 
         login_data = first.get("xloginresult")
         if not login_data:
             exception = first.get("exception", {})
             error_msg = exception.get("message", "") if isinstance(exception, dict) else str(exception)
-            raise RuntimeError(f"Login failed: {error_msg or 'Unknown error'}")
+            raise AuthenticationError(f"Login failed: {error_msg or 'Unknown error'}")
 
         # Parse accountList
         account_list = []
@@ -440,7 +447,7 @@ class XTBWebSocketClient:
             RuntimeError: If CAS client not available
         """
         if not self._cas_client:
-            raise RuntimeError("No CAS client available - authentication not started")
+            raise AuthenticationError("No CAS client available - authentication not started")
 
         # Route OTP to browser auth if active
         if getattr(self, "_browser_auth_active", False):
@@ -476,7 +483,7 @@ class XTBWebSocketClient:
     async def get_balance(self) -> AccountBalance:
         """Get account balance and equity information."""
         if not self._authenticated or not self._login_result:
-            raise RuntimeError("Must be authenticated to get balance")
+            raise AuthenticationError("Must be authenticated to get balance")
 
         account = None
         for acc in self._login_result.accountList:
@@ -486,7 +493,7 @@ class XTBWebSocketClient:
         if not account and self._login_result.accountList:
             account = self._login_result.accountList[0]
         if not account:
-            raise RuntimeError("Account not found in login result")
+            raise ProtocolError("Account not found in login result")
 
         res = await self.send(
             "getBalance",

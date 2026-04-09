@@ -1,14 +1,12 @@
 """Tests for WebSocket client."""
 
 import json
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from xtb_api.types.enums import SocketStatus, SubscriptionEid, Xs6Side
-from xtb_api.types.instrument import InstrumentSearchResult, Quote
-from xtb_api.types.trading import AccountBalance, Position, TradeOptions, TradeResult
+from xtb_api.exceptions import AuthenticationError, XTBConnectionError
+from xtb_api.types.enums import SocketStatus, SubscriptionEid
 from xtb_api.types.websocket import (
     WSAuthOptions,
     WSClientConfig,
@@ -372,7 +370,7 @@ class TestWSClientHelpers:
         client = XTBWebSocketClient(config)
         client._ws = MagicMock()  # Fake existing connection
 
-        with pytest.raises(RuntimeError, match="Already connected"):
+        with pytest.raises(XTBConnectionError, match="Already connected"):
             await client.connect()
 
     @pytest.mark.asyncio
@@ -383,7 +381,7 @@ class TestWSClientHelpers:
         )
         client = XTBWebSocketClient(config)
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(XTBConnectionError, match="Not connected"):
             await client.send("test", {"ping": {}})
 
     @pytest.mark.asyncio
@@ -394,5 +392,5 @@ class TestWSClientHelpers:
         )
         client = XTBWebSocketClient(config)
 
-        with pytest.raises(RuntimeError, match="Must be authenticated"):
+        with pytest.raises(AuthenticationError, match="Must be authenticated"):
             await client.get_balance()

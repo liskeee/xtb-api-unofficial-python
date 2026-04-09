@@ -36,6 +36,13 @@ try:
 except ImportError:
     websockets = None  # type: ignore[assignment]
 
+from xtb_api.exceptions import (
+    AuthenticationError,
+    ProtocolError,
+    TradeError,
+    XTBConnectionError,
+    XTBTimeoutError,
+)
 from xtb_api.grpc.proto import (
     GRPC_AUTH_ENDPOINT,
     GRPC_NEW_ORDER_ENDPOINT,
@@ -96,7 +103,7 @@ class GrpcClient:
             Decoded protobuf response bytes.
         """
         if httpx is None:
-            raise RuntimeError("httpx is required for native transport: pip install httpx")
+            raise XTBConnectionError("httpx is required for native transport: pip install httpx")
 
         headers = {
             "Content-Type": GRPC_WEB_TEXT_CONTENT_TYPE,
@@ -118,7 +125,7 @@ class GrpcClient:
             response_text = resp.text
 
         if not response_text:
-            raise RuntimeError("Native gRPC call returned empty response")
+            raise ProtocolError("Native gRPC call returned empty response")
 
         return base64.b64decode(response_text)
 
@@ -201,12 +208,12 @@ class GrpcClient:
             response = json.loads(raw)
             if response.get("id") == msg_id:
                 if "error" in response:
-                    raise RuntimeError(
+                    raise ProtocolError(
                         f"CDP error ({method}): {response['error']}"
                     )
                 return response.get("result", {})
 
-        raise TimeoutError(f"CDP timeout waiting for response to {method}")
+        raise XTBTimeoutError(f"CDP timeout waiting for response to {method}")
 
     async def _evaluate_js(
         self,
@@ -229,7 +236,7 @@ class GrpcClient:
             text = exc.get("text", "")
             exception = exc.get("exception", {})
             desc = exception.get("description", exception.get("value", ""))
-            raise RuntimeError(f"JS error: {text} — {desc}")
+            raise ProtocolError(f"JS error: {text} — {desc}")
 
         return result.get("result", {}).get("value")
 
@@ -270,15 +277,15 @@ class GrpcClient:
             async with websockets.asyncio.client.connect(worker_ws_url) as ws:
                 result = await self._evaluate_js(ws, js, await_promise=True, timeout=20.0)
         except websockets.exceptions.ConnectionClosed as e:
-            raise RuntimeError(f"Worker connection closed: {e}") from e
+            raise XTBConnectionError(f"Worker connection closed: {e}") from e
         except Exception as e:
             # Also catch ConnectionClosedError which may be a subclass
             if "ConnectionClosed" in type(e).__name__:
-                raise RuntimeError(f"Worker connection closed: {e}") from e
+                raise XTBConnectionError(f"Worker connection closed: {e}") from e
             raise
 
         if not result:
-            raise RuntimeError("Worker fetch returned empty response")
+            raise ProtocolError("Worker fetch returned empty response")
 
         return base64.b64decode(result)
 
@@ -347,12 +354,12 @@ class GrpcClient:
                 desc = exc.get("exception", {}).get(
                     "description", exc.get("text", "unknown")
                 )
-                raise RuntimeError(f"Isolated world JS error: {desc}")
+                raise ProtocolError(f"Isolated world JS error: {desc}")
 
             b64_result = result.get("result", {}).get("value")
 
         if not b64_result:
-            raise RuntimeError("Isolated world fetch returned empty response")
+            raise ProtocolError("Isolated world fetch returned empty response")
 
         return base64.b64decode(b64_result)
 
@@ -403,7 +410,7 @@ class GrpcClient:
             result = await self._evaluate_js(ws, js, await_promise=True, timeout=20.0)
 
         if not result:
-            raise RuntimeError("Page fetch returned empty response")
+            raise ProtocolError("Page fetch returned empty response")
 
         return base64.b64decode(result)
 
@@ -431,7 +438,7 @@ class GrpcClient:
 
         # ── CDP fallback ─────────────────────────────────────────
         if websockets is None:
-            raise RuntimeError(
+            raise XTBConnectionError(
                 "Both native (httpx) and CDP (websockets) transports unavailable. "
                 "Install httpx or websockets."
             )
@@ -514,7 +521,7 @@ class GrpcClient:
                 )
                 continue  # retry loop
 
-        raise RuntimeError(
+        raise XTBConnectionError(
             f"All CDP fetch approaches failed after {max_attempts} attempts. "
             f"Last error: {last_error}"
         ) from last_error
@@ -536,7 +543,7 @@ class GrpcClient:
         self._worker_ws_url = worker_ws
 
         if not page_ws:
-            raise RuntimeError(
+            raise XTBConnectionError(
                 "No Chrome page target found. Is Chrome running with "
                 f"--remote-debugging-port on {self._cdp_url}?"
             )
@@ -577,7 +584,7 @@ class GrpcClient:
 
         jwt = extract_jwt(response_bytes)
         if not jwt:
-            raise RuntimeError(
+            raise AuthenticationError(
                 "Failed to extract JWT from CreateAccessToken response "
                 f"({len(response_bytes)} bytes). "
                 "Check that TGT is valid and account info is correct."
@@ -613,7 +620,7 @@ class GrpcClient:
             GrpcTradeResult with success status and order details.
         """
         if not self._jwt:
-            raise RuntimeError("No JWT — call get_jwt(tgt) first")
+            raise AuthenticationError("No JWT — call get_jwt(tgt) first")
 
         side_name = "BUY" if side == SIDE_BUY else "SELL"
         logger.info(
