@@ -2,15 +2,13 @@
 
 import json
 import time
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from xtb_api.auth.auth_manager import AuthManager, TGT_REFRESH_MARGIN_SECONDS
+from xtb_api.auth.auth_manager import AuthManager
 from xtb_api.types.websocket import CASError, CASLoginSuccess, CASLoginTwoFactorRequired
-
 
 # -- Helpers --
 
@@ -69,11 +67,11 @@ class TestGetTgt:
     async def test_loads_from_session_file(self, tmp_path):
         session_file = tmp_path / "session.json"
         expires_at = datetime.fromtimestamp(
-            time.time() + 3600, tz=timezone.utc
+            time.time() + 3600, tz=UTC
         )
         session_file.write_text(json.dumps({
             "tgt": "TGT-from-file",
-            "extracted_at": datetime.now(timezone.utc).isoformat(),
+            "extracted_at": datetime.now(UTC).isoformat(),
             "expires_at": expires_at.isoformat(),
         }))
 
@@ -85,11 +83,11 @@ class TestGetTgt:
     async def test_skips_expired_session_file(self, tmp_path):
         session_file = tmp_path / "session.json"
         expires_at = datetime.fromtimestamp(
-            time.time() - 100, tz=timezone.utc
+            time.time() - 100, tz=UTC
         )
         session_file.write_text(json.dumps({
             "tgt": "TGT-old",
-            "extracted_at": datetime.now(timezone.utc).isoformat(),
+            "extracted_at": datetime.now(UTC).isoformat(),
             "expires_at": expires_at.isoformat(),
         }))
 

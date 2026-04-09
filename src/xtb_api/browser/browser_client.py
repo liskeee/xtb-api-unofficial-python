@@ -6,8 +6,7 @@ manipulating AngularJS services directly in the browser context.
 
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from xtb_api.types.instrument import InstrumentSearchResult, Quote
 from xtb_api.types.trading import AccountBalance, Position, TradeOptions, TradeResult

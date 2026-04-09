@@ -195,7 +195,7 @@ class BrowserCASAuth:
         # Wait for TGT from network response interceptor
         try:
             await asyncio.wait_for(self._tgt_event.wait(), timeout=30)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await self.close()
             raise CASError("BROWSER_AUTH_OTP_TIMEOUT", "Timed out waiting for TGT after OTP submission")
 

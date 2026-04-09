@@ -2,10 +2,10 @@
 
 import pytest
 
-from xtb_api.client import XTBClient, XTBClientConfig, ClientMode
-from xtb_api.types.websocket import WSAuthOptions, WSClientConfig, WSCredentials
-from xtb_api.types.trading import TradeOptions
 from xtb_api.browser.browser_client import BrowserClientConfig
+from xtb_api.client import XTBClient, XTBClientConfig
+from xtb_api.types.trading import TradeOptions
+from xtb_api.types.websocket import WSAuthOptions, WSClientConfig, WSCredentials
 
 
 class TestXTBClientConfig:
@@ -93,18 +93,11 @@ class TestXTBClientUtils:
 
     def test_imports(self):
         from xtb_api import (
-            XTBClient,
             CASClient,
-            XTBWebSocketClient,
-            XTBBrowserClient,
-            Xs6Side,
             SocketStatus,
             SubscriptionEid,
-            price_from_decimal,
-            price_to_decimal,
-            volume_from,
-            build_account_id,
-            parse_symbol_key,
+            Xs6Side,
+            XTBClient,
         )
         # Just verify all public exports are accessible
         assert XTBClient is not None
@@ -121,8 +114,8 @@ class TestXTBClientUtils:
         assert price.scale == 2
 
     def test_price_to_decimal(self):
-        from xtb_api.utils import price_to_decimal
         from xtb_api.types.trading import IPrice
+        from xtb_api.utils import price_to_decimal
 
         price = IPrice(value=262, scale=2)
         result = price_to_decimal(price)
