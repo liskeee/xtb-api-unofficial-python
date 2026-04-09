@@ -2,78 +2,94 @@
 
 import pytest
 
-from xtb_api.client import XTBClient, XTBClientConfig
+from xtb_api.client import XTBClient
 from xtb_api.types.trading import TradeOptions
-from xtb_api.types.websocket import WSAuthOptions, WSClientConfig, WSCredentials
-
-
-class TestXTBClientConfig:
-    """Tests for XTB client configuration."""
-
-    def test_websocket_config(self):
-        config = XTBClientConfig(
-            mode="websocket",
-            websocket=WSClientConfig(
-                url="wss://api5demoa.x-station.eu/v1/xstation",
-                account_number=12345678,
-            ),
-        )
-        assert config.mode == "websocket"
-        assert config.websocket is not None
 
 
 class TestXTBClientInit:
     """Tests for XTB client initialization."""
 
-    def test_websocket_mode(self):
+    def test_creates_with_required_args(self):
         client = XTBClient(
-            XTBClientConfig(
-                mode="websocket",
-                websocket=WSClientConfig(
-                    url="wss://api5demoa.x-station.eu/v1/xstation",
-                    account_number=12345678,
-                ),
-            )
-        )
-        assert client.ws is not None
-
-    def test_websocket_factory(self):
-        client = XTBClient.websocket(
-            url="wss://api5demoa.x-station.eu/v1/xstation",
+            email="test@example.com",
+            password="secret",
             account_number=12345678,
         )
+        assert client.account_number == 12345678
         assert client.ws is not None
+        assert client.grpc_client is None  # Lazy, not yet initialized
+        assert client.auth is not None
+        assert not client.is_connected
+        assert not client.is_authenticated
 
-    def test_websocket_mode_requires_config(self):
-        with pytest.raises(ValueError, match="websocket config required"):
-            XTBClient(XTBClientConfig(mode="websocket"))
-
-    def test_websocket_with_auth(self):
-        client = XTBClient.websocket(
-            url="wss://api5demoa.x-station.eu/v1/xstation",
-            account_number=12345678,
-            auth=WSAuthOptions(
-                credentials=WSCredentials(email="test@test.com", password="pass")
-            ),
+    def test_creates_with_custom_options(self):
+        client = XTBClient(
+            email="test@example.com",
+            password="secret",
+            account_number=87654321,
+            ws_url="wss://api5demoa.x-station.eu/v1/xstation",
+            endpoint="meta2",
+            account_server="XS-demo1",
+            auto_reconnect=False,
+            totp_secret="ABCDEFGH",
+            session_file="/tmp/test_session.json",
         )
+        assert client.account_number == 87654321
         assert client.ws is not None
-        assert client.ws._cas_client is not None
+
+    def test_lazy_grpc_not_initialized(self):
+        client = XTBClient(
+            email="test@example.com",
+            password="secret",
+            account_number=12345678,
+        )
+        assert client.grpc_client is None
+
+    def test_lazy_grpc_created_on_ensure(self):
+        client = XTBClient(
+            email="test@example.com",
+            password="secret",
+            account_number=12345678,
+        )
+        grpc = client._ensure_grpc()
+        assert grpc is not None
+        assert client.grpc_client is grpc
+        # Second call returns same instance
+        assert client._ensure_grpc() is grpc
+
+
+class TestXTBClientEvents:
+    """Tests for event proxy."""
+
+    def test_on_and_off(self):
+        client = XTBClient(
+            email="test@example.com",
+            password="secret",
+            account_number=12345678,
+        )
+
+        received = []
+        handler = lambda data: received.append(data)
+        client.on("tick", handler)
+        client.ws._emit("tick", {"symbol": "EURUSD"})
+        assert received == [{"symbol": "EURUSD"}]
+
+        client.off("tick", handler)
+        client.ws._emit("tick", {"symbol": "GBPUSD"})
+        assert len(received) == 1  # Not called again
 
 
 class TestXTBClientUtils:
     """Tests for utility functions used by client."""
 
-    def test_imports(self):
+    def test_top_level_imports(self):
         from xtb_api import (
-            CASClient,
             SocketStatus,
             SubscriptionEid,
             Xs6Side,
             XTBClient,
         )
-        # Just verify all public exports are accessible
         assert XTBClient is not None
-        assert CASClient is not None
         assert Xs6Side.BUY == 0
         assert SocketStatus.CONNECTED == "CONNECTED"
         assert SubscriptionEid.TICKS == 2

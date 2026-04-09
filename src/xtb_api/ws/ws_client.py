@@ -7,19 +7,22 @@ Provides real-time data subscriptions and trading capabilities via WebSocket.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import websockets
 import websockets.asyncio.client
 
+if TYPE_CHECKING:
+    from xtb_api.auth.auth_manager import AuthManager
+
 from xtb_api.auth.cas_client import CASClient
 from xtb_api.exceptions import (
     AuthenticationError,
-    InstrumentNotFoundError,
     ProtocolError,
     XTBConnectionError,
     XTBTimeoutError,
@@ -33,13 +36,6 @@ from xtb_api.types.trading import (
     TradeOptions,
     TradeResult,
 )
-from xtb_api.ws.parsers import (
-    parse_balance,
-    parse_instruments,
-    parse_orders,
-    parse_positions,
-    parse_quote,
-)
 from xtb_api.types.websocket import (
     CASLoginTwoFactorRequired,
     ClientInfo,
@@ -50,6 +46,13 @@ from xtb_api.types.websocket import (
     XLoginResult,
 )
 from xtb_api.utils import build_account_id, price_from_decimal, volume_from
+from xtb_api.ws.parsers import (
+    parse_balance,
+    parse_instruments,
+    parse_orders,
+    parse_positions,
+    parse_quote,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +71,13 @@ class XTBWebSocketClient:
     - Direct trading via tradeTransaction commands
     """
 
-    def __init__(self, config: WSClientConfig) -> None:
+    def __init__(
+        self,
+        config: WSClientConfig,
+        auth_manager: AuthManager | None = None,
+    ) -> None:
         self._config = config
+        self._auth_manager = auth_manager
         self._ws: websockets.asyncio.client.ClientConnection | None = None
         self._status = SocketStatus.CLOSED
         self._pending_requests: dict[str, asyncio.Future[WSResponse]] = {}
@@ -252,20 +260,16 @@ class XTBWebSocketClient:
     async def _close_ws(self) -> None:
         """Close WebSocket connection."""
         if self._ws:
-            try:
+            with contextlib.suppress(Exception):
                 await self._ws.close()
-            except Exception:
-                pass
 
     async def disconnect_async(self) -> None:
         """Async disconnect from the WebSocket server."""
         self._config.auto_reconnect = False
         if self._ws:
             self._update_status(SocketStatus.DISCONNECTING)
-            try:
+            with contextlib.suppress(Exception):
                 await self._ws.close()
-            except Exception:
-                pass
         self._cleanup()
 
     # ─── Send Commands ───
@@ -313,9 +317,9 @@ class XTBWebSocketClient:
         try:
             await self._ws.send(json.dumps(request))
             return await asyncio.wait_for(future, timeout=timeout_ms / 1000)
-        except TimeoutError:
+        except TimeoutError as e:
             self._pending_requests.pop(req_id, None)
-            raise XTBTimeoutError(f"Request {req_id} timed out")
+            raise XTBTimeoutError(f"Request {req_id} timed out") from e
 
     # ─── Subscriptions ───
 
@@ -808,7 +812,11 @@ class XTBWebSocketClient:
         self._listen_task = asyncio.get_event_loop().create_task(listen_loop())
 
     async def _schedule_reconnect(self) -> None:
-        """Schedule reconnection with exponential backoff."""
+        """Schedule reconnection with exponential backoff.
+
+        If an AuthManager is available, obtains a fresh service ticket
+        for re-authentication instead of reusing the (possibly stale) original.
+        """
         self._reconnecting = True
         await asyncio.sleep(self._reconnect_delay)
         self._reconnect_delay = min(
@@ -816,9 +824,18 @@ class XTBWebSocketClient:
             self._config.max_reconnect_delay / 1000,
         )
         try:
-            await self.connect()
-        except Exception:
-            pass
+            if self._auth_manager:
+                # Get fresh ST from AuthManager (handles TGT refresh if needed)
+                fresh_st = await self._auth_manager.get_service_ticket()
+                await self._establish_connection()
+                await self.register_client_info()
+                await self.login_with_service_ticket(fresh_st)
+            else:
+                await self.connect()
+        except Exception as e:
+            logger.warning("Reconnection failed: %s", e)
+            if self._config.auto_reconnect and not self._reconnecting:
+                asyncio.get_event_loop().create_task(self._schedule_reconnect())
 
     def _cleanup(self) -> None:
         """Clean up connection resources."""
@@ -827,7 +844,7 @@ class XTBWebSocketClient:
             self._listen_task.cancel()
             self._listen_task = None
 
-        for req_id, future in self._pending_requests.items():
+        for _req_id, future in self._pending_requests.items():
             if not future.done():
                 future.set_exception(RuntimeError("Connection closed"))
         self._pending_requests.clear()
