@@ -33,6 +33,13 @@ from xtb_api.types.trading import (
     TradeOptions,
     TradeResult,
 )
+from xtb_api.ws.parsers import (
+    parse_balance,
+    parse_instruments,
+    parse_orders,
+    parse_positions,
+    parse_quote,
+)
 from xtb_api.types.websocket import (
     CASLoginTwoFactorRequired,
     ClientInfo,
@@ -500,25 +507,7 @@ class XTBWebSocketClient:
             {"getAndSubscribeElement": {"eid": SubscriptionEid.TOTAL_BALANCE}},
         )
 
-        elements = self._extract_elements(res)
-        if elements:
-            balance_data = (elements[0] or {}).get("value", {}).get("xtotalbalance")
-            if balance_data:
-                return AccountBalance(
-                    balance=float(balance_data.get("balance", 0)),
-                    equity=float(balance_data.get("equity", 0)),
-                    free_margin=float(balance_data.get("freeMargin", 0)),
-                    currency=account.currency,
-                    account_number=account.accountNo,
-                )
-
-        return AccountBalance(
-            balance=0.0,
-            equity=0.0,
-            free_margin=0.0,
-            currency=account.currency,
-            account_number=account.accountNo,
-        )
+        return parse_balance(self._extract_elements(res), account.currency, account.accountNo)
 
     async def get_positions(self) -> list[Position]:
         """Get all open trading positions."""
@@ -528,36 +517,7 @@ class XTBWebSocketClient:
             timeout_ms=30000,
         )
 
-        elements = self._extract_elements(res)
-        positions: list[Position] = []
-
-        for el in elements:
-            trade = (el or {}).get("value", {}).get("xcfdtrade")
-            if not trade:
-                continue
-
-            side_val = int(trade.get("side", 0))
-            positions.append(
-                Position(
-                    symbol=str(trade.get("symbol", "")),
-                    instrument_id=int(trade["idQuote"]) if trade.get("idQuote") is not None else None,
-                    volume=float(trade.get("volume", 0)),
-                    current_price=0.0,
-                    open_price=float(trade.get("openPrice", 0)),
-                    stop_loss=float(trade["sl"]) if trade.get("sl") and trade["sl"] != 0 else None,
-                    take_profit=float(trade["tp"]) if trade.get("tp") and trade["tp"] != 0 else None,
-                    profit_percent=0.0,
-                    profit_net=0.0,
-                    swap=float(trade["swap"]) if trade.get("swap") is not None else None,
-                    side="buy" if side_val == Xs6Side.BUY else "sell",
-                    order_id=str(trade["positionId"]) if trade.get("positionId") is not None else None,
-                    commission=float(trade["commission"]) if trade.get("commission") is not None else None,
-                    margin=float(trade["margin"]) if trade.get("margin") is not None else None,
-                    open_time=int(trade["openTime"]) if trade.get("openTime") is not None else None,
-                )
-            )
-
-        return positions
+        return parse_positions(self._extract_elements(res))
 
     async def get_orders(self) -> list[PendingOrder]:
         """Get all pending (limit/stop) orders."""
@@ -566,32 +526,7 @@ class XTBWebSocketClient:
             {"getAndSubscribeElement": {"eid": SubscriptionEid.ORDERS}},
         )
 
-        elements = self._extract_elements(res)
-        orders: list[PendingOrder] = []
-
-        for el in elements:
-            trade = (el or {}).get("value", {}).get("xcfdtrade")
-            if not trade:
-                continue
-
-            side_val = int(trade.get("side", 0))
-            orders.append(
-                PendingOrder(
-                    symbol=str(trade.get("symbol", "")),
-                    instrument_id=int(trade["idQuote"]) if trade.get("idQuote") is not None else None,
-                    volume=float(trade.get("volume", 0)),
-                    price=float(trade.get("openPrice", 0)),
-                    stop_loss=float(trade["sl"]) if trade.get("sl") and trade["sl"] != 0 else None,
-                    take_profit=float(trade["tp"]) if trade.get("tp") and trade["tp"] != 0 else None,
-                    side="buy" if side_val == Xs6Side.BUY else "sell",
-                    order_id=str(trade["positionId"]) if trade.get("positionId") is not None else None,
-                    order_type=str(trade.get("orderType", "")),
-                    expiration=int(trade["expiration"]) if trade.get("expiration") is not None else None,
-                    open_time=int(trade["openTime"]) if trade.get("openTime") is not None else None,
-                )
-            )
-
-        return orders
+        return parse_orders(self._extract_elements(res))
 
     async def buy(
         self, symbol: str, volume: int, options: TradeOptions | None = None
@@ -633,24 +568,7 @@ class XTBWebSocketClient:
             timeout_ms=30000,
         )
 
-        elements = self._extract_elements(res)
-        all_symbols: list[InstrumentSearchResult] = []
-
-        for el in elements:
-            sym = (el or {}).get("value", {}).get("xcfdsymbol")
-            if not sym:
-                continue
-            all_symbols.append(
-                InstrumentSearchResult(
-                    symbol=str(sym.get("name", "")),
-                    instrument_id=int(sym.get("instrumentId", sym.get("quoteId", 0))),
-                    name=str(sym.get("description", sym.get("name", ""))),
-                    description=str(sym.get("description", "")),
-                    asset_class=str(sym.get("idAssetClass", "")),
-                    symbol_key=f"{sym.get('idAssetClass')}_{sym.get('name')}_{sym.get('groupId', sym.get('quoteId'))}",
-                )
-            )
-
+        all_symbols = parse_instruments(self._extract_elements(res))
         self._symbols_cache = all_symbols
         logger.info(f"Cached {len(all_symbols)} instruments for instant search")
 
@@ -684,19 +602,9 @@ class XTBWebSocketClient:
         for key in keys_to_try:
             try:
                 res = await self.subscribe_ticks(key)
-                elements = self._extract_elements(res)
-                if elements:
-                    tick = (elements[0] or {}).get("value", {}).get("xcfdtick")
-                    if tick:
-                        return Quote(
-                            symbol=str(tick.get("symbol", symbol)),
-                            ask=float(tick.get("ask", 0)),
-                            bid=float(tick.get("bid", 0)),
-                            spread=float(tick.get("ask", 0)) - float(tick.get("bid", 0)),
-                            high=float(tick["high"]) if tick.get("high") is not None else None,
-                            low=float(tick["low"]) if tick.get("low") is not None else None,
-                            time=int(tick["timestamp"]) if tick.get("timestamp") is not None else None,
-                        )
+                quote = parse_quote(self._extract_elements(res), symbol)
+                if quote:
+                    return quote
             except Exception:
                 continue
 
