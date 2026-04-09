@@ -110,23 +110,32 @@ class BrowserCASAuth:
         # Navigate to login page
         logger.info("Navigating to %s", LOGIN_URL)
         await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT)
-        await self._page.wait_for_selector('input[name="xslogin"]', state="visible", timeout=PAGE_LOAD_TIMEOUT)
+
+        # New xStation5 UI uses generic textbox inputs instead of named inputs.
+        # Wait for the email field (first textbox) to appear.
+        email_input = self._page.get_by_role("textbox").first
+        await email_input.wait_for(state="visible", timeout=PAGE_LOAD_TIMEOUT)
         logger.info("Login form found")
 
         # Type credentials with human-like delays (avoids bot detection)
-        await self._page.click('input[name="xslogin"]')
+        await email_input.click()
+        # Clear any pre-filled value before typing
+        await email_input.fill("")
         await self._page.keyboard.type(email, delay=30)
-        await self._page.click('input[name="xspass"]')
+
+        password_input = self._page.get_by_role("textbox").nth(1)
+        await password_input.click()
+        await password_input.fill("")
         await self._page.keyboard.type(password, delay=30)
 
         await self._page.wait_for_timeout(300)
 
-        # Submit form
-        submit = self._page.locator('input[type="button"].xs-btn-ok-login')
+        # Submit form — new UI uses a button labeled "Login"
+        submit = self._page.get_by_role("button", name="Login")
         if await submit.is_visible(timeout=3000):
             await submit.click()
         else:
-            await self._page.press('input[name="xspass"]', "Enter")
+            await password_input.press("Enter")
 
         logger.info("Login form submitted")
 
