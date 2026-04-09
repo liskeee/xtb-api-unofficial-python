@@ -261,16 +261,10 @@ class CASClient:
 
         result = resp.json()
 
-        # Extract TGT from response body or Set-Cookie header
+        # Extract TGT from response body or cookies
         tgt = result.get("ticket") or result.get("tgt")
         if not tgt:
-            # Try Set-Cookie: CASTGT=TGT-xxx; ...
-            set_cookie = resp.headers.get("Set-Cookie", "")
-            for part in set_cookie.split(";"):
-                part = part.strip()
-                if part.startswith("CASTGT="):
-                    tgt = part[len("CASTGT=") :]
-                    break
+            tgt = resp.cookies.get("CASTGT") or resp.cookies.get("CASTGC")
 
         if result.get("loginPhase") == "TGT_CREATED" and tgt:
             return CASLoginSuccess(

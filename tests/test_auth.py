@@ -1,4 +1,4 @@
-"""Tests for CAS authentication client."""
+"""Tests for CAS authentication client and AuthManager."""
 
 import hashlib
 import time
@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from xtb_api.auth.auth_manager import AuthManager
 from xtb_api.auth.cas_client import CASClient, CASClientConfig
 from xtb_api.types.websocket import CASError, CASLoginSuccess, CASLoginTwoFactorRequired
 
@@ -335,3 +336,132 @@ class TestCASClient:
         assert isinstance(result, CASLoginSuccess)
         payload = mock_client.post.call_args[1]["json"]
         assert payload["loginTicket"] == "old-session-id"
+
+
+class TestAuthManager:
+    """Tests for AuthManager lifecycle."""
+
+    def test_is_tgt_fresh(self):
+        assert AuthManager._is_tgt_fresh(time.time() + 600) is True
+        assert AuthManager._is_tgt_fresh(time.time() + 200) is False  # Within 5min margin
+        assert AuthManager._is_tgt_fresh(time.time() - 100) is False
+
+    @pytest.mark.asyncio
+    async def test_get_tgt_returns_cached(self):
+        auth = AuthManager(email="t@t.com", password="p")
+        auth._cached_tgt = "TGT-cached"
+        auth._cached_expires_at = time.time() + 3600
+
+        tgt = await auth.get_tgt()
+        assert tgt == "TGT-cached"
+
+    @pytest.mark.asyncio
+    async def test_get_tgt_calls_login_when_no_cache(self):
+        auth = AuthManager(email="t@t.com", password="p")
+        auth._login_with_fallback = AsyncMock(
+            return_value=CASLoginSuccess(tgt="TGT-fresh", expires_at=time.time() + 3600)
+        )
+
+        tgt = await auth.get_tgt()
+        assert tgt == "TGT-fresh"
+        auth._login_with_fallback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_service_ticket_retries_on_expired(self):
+        auth = AuthManager(email="t@t.com", password="p")
+        auth._cached_tgt = "TGT-old"
+        auth._cached_expires_at = time.time() + 3600
+
+        # First get_service_ticket fails with TGT expired, second succeeds
+        call_count = 0
+
+        async def mock_get_st(tgt, service):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise CASError("CAS_TGT_EXPIRED", "expired")
+            from xtb_api.auth.cas_client import CASServiceTicketResult
+
+            return CASServiceTicketResult(service_ticket="ST-new", service=service)
+
+        auth._cas.get_service_ticket = mock_get_st
+        auth._login_with_fallback = AsyncMock(
+            return_value=CASLoginSuccess(tgt="TGT-refreshed", expires_at=time.time() + 3600)
+        )
+
+        st = await auth.get_service_ticket()
+        assert st == "ST-new"
+        assert call_count == 2
+
+    def test_invalidate_clears_memory_cache(self):
+        auth = AuthManager(email="t@t.com", password="p")
+        auth._cached_tgt = "TGT-test"
+        auth._cached_expires_at = time.time() + 3600
+
+        auth.invalidate()
+        assert auth._cached_tgt is None
+        assert auth._cached_expires_at == 0.0
+
+    def test_session_file_save_and_load(self, tmp_path):
+        session_file = tmp_path / "session.json"
+        auth = AuthManager(email="t@t.com", password="p", session_file=str(session_file))
+
+        expires_at = time.time() + 3600
+        auth._cache_tgt("TGT-saved", expires_at)
+
+        assert session_file.exists()
+        assert (session_file.stat().st_mode & 0o777) == 0o600
+
+        loaded = auth._load_session_file()
+        assert loaded is not None
+        assert loaded["tgt"] == "TGT-saved"
+
+    def test_session_file_load_expired(self, tmp_path):
+        session_file = tmp_path / "session.json"
+        auth = AuthManager(email="t@t.com", password="p", session_file=str(session_file))
+
+        auth._cache_tgt("TGT-old", time.time() - 100)
+
+        # Clear memory cache so it reads from file
+        auth._cached_tgt = None
+        auth._cached_expires_at = 0.0
+
+        loaded = auth._load_session_file()
+        assert loaded is None
+
+    def test_session_file_fixes_permissions(self, tmp_path):
+        session_file = tmp_path / "session.json"
+        auth = AuthManager(email="t@t.com", password="p", session_file=str(session_file))
+
+        # Save normally then make it permissive
+        expires_at = time.time() + 3600
+        auth._cache_tgt("TGT-test", expires_at)
+        session_file.chmod(0o644)
+
+        # Loading should fix permissions
+        loaded = auth._load_session_file()
+        assert loaded is not None
+        assert (session_file.stat().st_mode & 0o777) == 0o600
+
+    @pytest.mark.asyncio
+    async def test_aclose_closes_cas_client(self):
+        auth = AuthManager(email="t@t.com", password="p")
+        auth._cas.aclose = AsyncMock()
+
+        await auth.aclose()
+        auth._cas.aclose.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_two_factor_without_secret_raises(self):
+        auth = AuthManager(email="t@t.com", password="p", totp_secret="")
+        challenge = CASLoginTwoFactorRequired(
+            login_ticket="MID-123",
+            session_id="sess",
+            methods=["TOTP"],
+            expires_at=time.time() + 300,
+        )
+
+        with pytest.raises(CASError) as exc_info:
+            await auth._handle_two_factor(challenge)
+
+        assert "2FA_NO_SECRET" in exc_info.value.code

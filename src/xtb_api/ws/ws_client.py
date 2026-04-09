@@ -165,10 +165,11 @@ class XTBWebSocketClient:
         for handler in self._event_handlers.get(event, []):
             try:
                 result = handler(*args)
-                if inspect.isawaitable(result):
-                    asyncio.get_running_loop().create_task(result)
-            except RuntimeError:
-                pass  # No running loop — skip async handler
+                if inspect.iscoroutine(result):
+                    try:
+                        asyncio.get_running_loop().create_task(result)
+                    except RuntimeError:
+                        result.close()  # Prevent "coroutine never awaited" warning
             except Exception:
                 logger.error("Error in event handler for '%s'", event, exc_info=True)
 
@@ -260,16 +261,26 @@ class XTBWebSocketClient:
         await self.login_with_service_ticket(service_ticket)
 
     def disconnect(self) -> None:
-        """Disconnect from the WebSocket server."""
+        """Disconnect from the WebSocket server.
+
+        Prefers async close when a running loop is available.
+        Falls back to cleanup-only when called outside async context.
+        """
         self._intentional_disconnect = True
-        if self._ws:
+        ws = self._ws  # Capture before cleanup nulls it
+        if ws:
             self._update_status(SocketStatus.DISCONNECTING)
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._close_ws())
+                loop.create_task(self._close_ws_ref(ws))
             except RuntimeError:
                 pass  # No running loop — ws will be cleaned up below
         self._cleanup()
+
+    async def _close_ws_ref(self, ws: Any) -> None:
+        """Close a specific WebSocket connection reference."""
+        with contextlib.suppress(Exception):
+            await ws.close()
 
     async def _close_ws(self) -> None:
         """Close WebSocket connection."""
@@ -848,8 +859,11 @@ class XTBWebSocketClient:
         except Exception as e:
             logger.warning("Reconnection attempt %d failed: %s", self._reconnect_attempts, e)
             self._reconnecting = False
-            if self._config.auto_reconnect:
+            if self._config.auto_reconnect and self._reconnect_attempts < self._max_reconnect_attempts:
                 asyncio.get_running_loop().create_task(self._schedule_reconnect())
+            elif self._reconnect_attempts >= self._max_reconnect_attempts:
+                error = ReconnectionError(f"Exhausted {self._max_reconnect_attempts} reconnection attempts")
+                self._emit("error", error)
 
     def _cleanup(self) -> None:
         """Clean up connection resources."""

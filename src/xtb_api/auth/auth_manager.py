@@ -236,15 +236,15 @@ class AuthManager:
             return None
 
         try:
-            # Warn if file is readable by group/others (TGT is sensitive)
+            # Fix permissions if file is readable by group/others (TGT is sensitive)
             file_mode = self._session_file.stat().st_mode & 0o777
             if file_mode & 0o077:
                 logger.warning(
-                    "Session file %s has permissive permissions (%o). "
-                    "Expected 0600. Re-saving with correct permissions.",
+                    "Session file %s has permissive permissions (%o). Fixing to 0600.",
                     self._session_file,
                     file_mode,
                 )
+                self._session_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
             data = json.loads(self._session_file.read_text())
             tgt = data.get("tgt", "")

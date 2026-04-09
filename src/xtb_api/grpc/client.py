@@ -262,8 +262,11 @@ class GrpcClient:
         """Parse gRPC-web trade response into GrpcTradeResult."""
         response_text = response_bytes.decode("latin-1", errors="replace")
 
-        # Success: grpc-status 0 or data frame (0x00 prefix)
-        if "grpc-status: 0" in response_text or (len(response_bytes) > 5 and response_bytes[0] == 0):
+        # Check for explicit error status first
+        has_error_status = "grpc-status:" in response_text and "grpc-status: 0" not in response_text
+        # Success: explicit grpc-status 0, or data frame without error trailer
+        has_data_frame = len(response_bytes) > 5 and response_bytes[0] == 0
+        if "grpc-status: 0" in response_text or (has_data_frame and not has_error_status):
             uuid_match = re.search(
                 r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
                 response_text,
