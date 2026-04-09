@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-browser = ["playwright>=1.40"]
+browser-auth = ["playwright>=1.40"]
 totp = ["pyotp>=2.9.0"]
 dev = [
     "pytest>=8.0",

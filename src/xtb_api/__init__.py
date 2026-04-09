@@ -16,7 +16,6 @@ from xtb_api.exceptions import (
 from xtb_api.auth.auth_manager import AuthManager
 from xtb_api.auth.cas_client import CASClient, CASClientConfig
 from xtb_api.auth.chrome_session import ChromeSession
-from xtb_api.browser.browser_client import BrowserClientConfig, XTBBrowserClient
 from xtb_api.client import ClientMode, XTBClient, XTBClientConfig
 from xtb_api.grpc import SIDE_BUY, SIDE_SELL, GrpcClient, GrpcTradeResult
 from xtb_api.types.enums import (
@@ -94,9 +93,6 @@ __all__ = [
     "ChromeSession",
     # WebSocket
     "XTBWebSocketClient",
-    # Browser
-    "XTBBrowserClient",
-    "BrowserClientConfig",
     # gRPC
     "GrpcClient",
     "GrpcTradeResult",

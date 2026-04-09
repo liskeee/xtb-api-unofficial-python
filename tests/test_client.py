@@ -2,7 +2,6 @@
 
 import pytest
 
-from xtb_api.browser.browser_client import BrowserClientConfig
 from xtb_api.client import XTBClient, XTBClientConfig
 from xtb_api.types.trading import TradeOptions
 from xtb_api.types.websocket import WSAuthOptions, WSClientConfig, WSCredentials
@@ -22,14 +21,6 @@ class TestXTBClientConfig:
         assert config.mode == "websocket"
         assert config.websocket is not None
 
-    def test_browser_config(self):
-        config = XTBClientConfig(
-            mode="browser",
-            browser=BrowserClientConfig(cdp_url="ws://127.0.0.1:9222"),
-        )
-        assert config.mode == "browser"
-        assert config.browser is not None
-
 
 class TestXTBClientInit:
     """Tests for XTB client initialization."""
@@ -45,17 +36,6 @@ class TestXTBClientInit:
             )
         )
         assert client.ws is not None
-        assert client.browser is None
-
-    def test_browser_mode(self):
-        client = XTBClient(
-            XTBClientConfig(
-                mode="browser",
-                browser=BrowserClientConfig(cdp_url="ws://127.0.0.1:9222"),
-            )
-        )
-        assert client.browser is not None
-        assert client.ws is None
 
     def test_websocket_factory(self):
         client = XTBClient.websocket(
@@ -64,17 +44,9 @@ class TestXTBClientInit:
         )
         assert client.ws is not None
 
-    def test_browser_factory(self):
-        client = XTBClient.create_browser("ws://127.0.0.1:9222")
-        assert client.browser is not None
-
     def test_websocket_mode_requires_config(self):
         with pytest.raises(ValueError, match="websocket config required"):
             XTBClient(XTBClientConfig(mode="websocket"))
-
-    def test_browser_mode_requires_config(self):
-        with pytest.raises(ValueError, match="browser config required"):
-            XTBClient(XTBClientConfig(mode="browser"))
 
     def test_websocket_with_auth(self):
         client = XTBClient.websocket(
