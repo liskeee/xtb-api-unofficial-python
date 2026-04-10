@@ -109,9 +109,10 @@ class AuthManager:
         if self._session_file:
             cached = self._load_session_file()
             if cached:
-                self._cached_tgt = cached["tgt"]
-                self._cached_expires_at = cached["expires_at"]
-                return self._cached_tgt
+                tgt = str(cached["tgt"])
+                self._cached_tgt = tgt
+                self._cached_expires_at = float(cached["expires_at"])
+                return tgt
 
         # 3. REST CAS login
         result = await self._login_with_fallback()
