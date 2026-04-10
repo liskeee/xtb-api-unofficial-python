@@ -85,10 +85,25 @@ class BrowserCASAuth:
         needs_cleanup = True
         self._playwright = await async_playwright().start()
         try:
-            self._browser = await self._playwright.chromium.launch(
-                headless=self._headless,
-                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-            )
+            from playwright.async_api import Error as _PlaywrightError
+
+            try:
+                self._browser = await self._playwright.chromium.launch(
+                    headless=self._headless,
+                    args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+                )
+            except _PlaywrightError as e:
+                msg = str(e)
+                if "Executable doesn't exist" in msg:
+                    raise CASError(
+                        "BROWSER_CHROMIUM_MISSING",
+                        "Chromium browser not found. The xtb-api-python library requires a "
+                        "Chromium install for XTB authentication.\n\n"
+                        "Run:\n    playwright install chromium\n\n"
+                        "See https://github.com/liskeee/xtb-api-python#post-install-setup "
+                        "for details.",
+                    ) from e
+                raise
             context = await self._browser.new_context(
                 user_agent=(
                     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
