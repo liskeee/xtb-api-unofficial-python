@@ -3,8 +3,6 @@
 import base64
 import struct
 
-from xtb_api.types.enums import Xs6Side
-
 from xtb_api.grpc.proto import (
     SIDE_BUY,
     SIDE_SELL,
@@ -20,6 +18,7 @@ from xtb_api.grpc.proto import (
     parse_grpc_frames,
     parse_proto_fields,
 )
+from xtb_api.types.enums import Xs6Side
 
 
 class TestVarint:

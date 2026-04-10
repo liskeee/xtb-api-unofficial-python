@@ -404,7 +404,6 @@ class TestWSClientHelpers:
         )
 
         call_count = 0
-        original_send = client.send
 
         async def counting_send(cmd, payload, timeout_ms=10000):
             nonlocal call_count
@@ -416,9 +415,7 @@ class TestWSClientHelpers:
         client.send = counting_send
 
         # Launch two concurrent searches
-        import asyncio
-
-        results = await asyncio.gather(
+        await asyncio.gather(
             client.search_instrument("FOO"),
             client.search_instrument("FOO"),
         )
@@ -445,7 +442,7 @@ class TestWSClientHelpers:
 
         # Make parse_quote raise
         with patch("xtb_api.ws.ws_client.parse_quote", side_effect=ValueError("bad data")):
-            result = await client.get_quote("FOO")
+            await client.get_quote("FOO")
 
         # Even though parse raised, unsubscribe must have been called
         client.unsubscribe_ticks.assert_awaited()
