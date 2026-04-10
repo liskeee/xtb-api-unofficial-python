@@ -54,8 +54,8 @@ The release workflow at `.github/workflows/release.yml` publishes to PyPI on
 tag push using Trusted Publishing. To cut a new release:
 
 1. Make sure `master` is green and your working tree is clean.
-2. Update `CHANGELOG.md`: rename the `## Unreleased` heading to the new version
-   and today's date (`## 0.4.0 — YYYY-MM-DD`).
+2. Update `CHANGELOG.md`: add a new `## 0.4.0 — YYYY-MM-DD` entry at the top
+   (or rename an existing `## Unreleased` heading if one is staged).
 3. Bump `version` in `pyproject.toml`.
 4. Commit: `git commit -am "chore(release): 0.4.0"`
 5. Tag and push:
