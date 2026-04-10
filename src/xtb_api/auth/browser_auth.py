@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from xtb_api.types.websocket import (
     CASError,
@@ -19,6 +20,9 @@ from xtb_api.types.websocket import (
     CASLoginSuccess,
     CASLoginTwoFactorRequired,
 )
+
+if TYPE_CHECKING:
+    from playwright.async_api import Browser, Page, Playwright, Response
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,10 @@ class BrowserCASAuth:
     Launches headless Chromium with stealth patches, fills the login form on
     xStation5, and intercepts the TGT from CAS network responses.
     """
+
+    _browser: "Browser | None"
+    _page: "Page | None"
+    _playwright: "Playwright | None"
 
     def __init__(self, *, headless: bool = True) -> None:
         self._headless = headless
@@ -94,6 +102,9 @@ class BrowserCASAuth:
             await context.add_init_script(_STEALTH_JS)
 
             self._page = await context.new_page()
+            assert self._browser is not None
+            assert self._page is not None
+            assert self._playwright is not None
 
             # Set up response interceptor for TGT / 2FA
             self._page.on("response", self._on_response)
@@ -241,7 +252,7 @@ class BrowserCASAuth:
         self._page = None
         self._playwright = None
 
-    async def _on_response(self, response) -> None:
+    async def _on_response(self, response: "Response") -> None:
         """Intercept network responses to extract TGT."""
         try:
             url = response.url
