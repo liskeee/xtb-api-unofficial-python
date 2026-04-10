@@ -580,9 +580,7 @@ class XTBWebSocketClient:
         return [
             s
             for s in self._symbols_cache
-            if query_lower in s.symbol.lower()
-            or query_lower in s.name.lower()
-            or query_lower in s.description.lower()
+            if query_lower in s.symbol.lower() or query_lower in s.name.lower() or query_lower in s.description.lower()
         ][:100]
 
     async def search_instrument(self, query: str) -> list[InstrumentSearchResult]:
