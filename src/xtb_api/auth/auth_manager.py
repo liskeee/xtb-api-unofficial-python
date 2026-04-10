@@ -186,7 +186,7 @@ class AuthManager:
 
     async def _handle_two_factor(self, challenge: CASLoginTwoFactorRequired) -> CASLoginSuccess:
         """Handle 2FA challenge using TOTP auto-generation or browser OTP."""
-        code = self._generate_totp()
+        code = await self._generate_totp()
 
         # If browser session is active, prefer browser OTP (WAF blocks REST 2FA too)
         if hasattr(self._cas, "_browser_auth") and self._cas._browser_auth:
@@ -205,12 +205,14 @@ class AuthManager:
 
         return result
 
-    def _generate_totp(self) -> str:
+    async def _generate_totp(self) -> str:
         """Generate a TOTP code from the stored secret.
 
-        If fewer than 5 seconds remain in the current 30-second TOTP window,
-        returns the *next* window's code to avoid the server rejecting a code
-        that expires in transit (~6.6% failure rate without this).
+        If fewer than 2 seconds remain in the current 30-second TOTP window,
+        waits for the next window before generating the code. Without this,
+        roughly 6.6% of logins fail because the code expires in transit before
+        the server validates it. Waiting (rather than returning the next
+        window's code) avoids relying on server-side window-drift tolerance.
         """
         if not self._totp_secret:
             raise CASError(
@@ -226,11 +228,11 @@ class AuthManager:
                 "2FA requires the pyotp package. Install with: pip install 'pyotp>=2.9.0'",
             ) from e
         totp = pyotp.TOTP(self._totp_secret)
-        now = time.time()
-        remaining = totp.interval - (now % totp.interval)
-        if remaining < 5:
-            # Near window boundary — use the next window's code
-            return totp.at(now + remaining)
+        remaining = totp.interval - (time.time() % totp.interval)
+        if remaining < 2:
+            # Within 2s of window boundary — wait for the next window so the
+            # generated code is guaranteed valid for its full lifetime.
+            await asyncio.sleep(remaining + 0.1)
         return totp.now()
 
     def _cache_tgt(self, tgt: str, expires_at: float) -> None:
