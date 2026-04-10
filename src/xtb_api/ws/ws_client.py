@@ -13,7 +13,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import websockets
 import websockets.asyncio.client
@@ -668,7 +668,7 @@ class XTBWebSocketClient:
             return TradeResult(
                 success=False,
                 symbol=symbol,
-                side=side_str,
+                side=cast("Literal['buy', 'sell']", side_str),
                 error=f"Instrument not found: {symbol}",
             )
 
@@ -715,7 +715,7 @@ class XTBWebSocketClient:
 
         if res.error:
             return TradeResult(
-                success=False, symbol=symbol, side=side_str, error=res.error.get("message", "Unknown error")
+                success=False, symbol=symbol, side=cast("Literal['buy', 'sell']", side_str), error=res.error.get("message", "Unknown error")
             )
 
         data = self._extract_response_data(res)
@@ -723,7 +723,7 @@ class XTBWebSocketClient:
             success=True,
             order_id=str(data.get("orderId")) if data and data.get("orderId") is not None else None,
             symbol=symbol,
-            side=side_str,
+            side=cast("Literal['buy', 'sell']", side_str),
             volume=float(volume),
             price=float(data["price"]) if data and data.get("price") is not None else None,
         )
@@ -736,7 +736,7 @@ class XTBWebSocketClient:
             if isinstance(first, dict):
                 return first
         if res.data and isinstance(res.data, dict):
-            return res.data
+            return cast("dict[str, Any] | None", res.data)
         return None
 
     def _extract_elements(self, res: WSResponse) -> list[dict[str, Any]]:
@@ -749,7 +749,7 @@ class XTBWebSocketClient:
             return []
         element = first.get("element", {})
         if isinstance(element, dict) and isinstance(element.get("elements"), list):
-            return element["elements"]
+            return cast("list[dict[str, Any]]", element["elements"])
         return []
 
     def _next_req_id(self, prefix: str) -> str:
@@ -825,6 +825,7 @@ class XTBWebSocketClient:
 
         async def listen_loop() -> None:
             try:
+                assert self._ws is not None
                 async for message in self._ws:
                     if isinstance(message, (str, bytes)):
                         self._handle_message(message if isinstance(message, str) else message.decode())
