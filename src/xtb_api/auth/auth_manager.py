@@ -84,9 +84,7 @@ class AuthManager:
 
         # Inject cookies_file into CAS config
         if cookies_file is not None:
-            cas_config = (cas_config or CASClientConfig()).model_copy(
-                update={"cookies_file": cookies_file}
-            )
+            cas_config = (cas_config or CASClientConfig()).model_copy(update={"cookies_file": cookies_file})
 
         self._cas = CASClient(cas_config)
         self._cached_tgt: str | None = None

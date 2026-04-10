@@ -6,6 +6,7 @@ Handles the complete auth flow: login → TGT → Service Ticket → WebSocket l
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -19,14 +20,14 @@ from pathlib import Path
 import httpx
 from pydantic import BaseModel
 
-logger = logging.getLogger(__name__)
-
 from xtb_api.types.websocket import (
     CASError,
     CASLoginResult,
     CASLoginSuccess,
     CASLoginTwoFactorRequired,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class CASServiceTicketResult(BaseModel):
@@ -85,10 +86,8 @@ class CASClient:
         current_loop = asyncio.get_running_loop()
         if self._http is None or self._http.is_closed or self._loop is not current_loop:
             if self._http and not self._http.is_closed:
-                try:
+                with contextlib.suppress(Exception):
                     await self._http.aclose()
-                except Exception:
-                    pass
             cookies = self._load_cookies()
             self._http = httpx.AsyncClient(timeout=30.0, cookies=cookies)
             self._loop = current_loop

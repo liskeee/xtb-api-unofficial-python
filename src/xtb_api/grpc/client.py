@@ -12,6 +12,7 @@ Flow:
 from __future__ import annotations
 
 import base64
+import contextlib
 import logging
 import re
 import time
@@ -36,7 +37,6 @@ from xtb_api.grpc.proto import (
     build_grpc_web_text_body,
     build_new_market_order,
     extract_jwt,
-    parse_grpc_frames,
 )
 from xtb_api.grpc.types import GrpcTradeResult
 
@@ -288,10 +288,8 @@ class GrpcClient:
                 trailer_text = frame_data.decode("latin-1", errors="replace")
                 for line in trailer_text.split("\r\n"):
                     if line.startswith("grpc-status:"):
-                        try:
+                        with contextlib.suppress(ValueError):
                             grpc_status = int(line.split(":", 1)[1].strip())
-                        except ValueError:
-                            pass
                     elif line.startswith("grpc-message:"):
                         grpc_message = line.split(":", 1)[1].strip()
             else:
@@ -312,9 +310,7 @@ class GrpcClient:
         # Error cases
         status = grpc_status if grpc_status is not None else 0
         response_text = response_bytes.decode("latin-1", errors="replace")
-        if grpc_message and "RBAC" in grpc_message:
-            error_msg = "gRPC RBAC: access denied — JWT may be expired"
-        elif "RBAC" in response_text:
+        if grpc_message and "RBAC" in grpc_message or "RBAC" in response_text:
             error_msg = "gRPC RBAC: access denied — JWT may be expired"
         elif grpc_message:
             error_msg = f"gRPC error: grpc-message: {grpc_message}"

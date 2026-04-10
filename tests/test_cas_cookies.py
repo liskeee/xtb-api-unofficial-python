@@ -6,8 +6,6 @@ corrupt file handling, and cookie merge behavior.
 
 import json
 import os
-import stat
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -74,7 +72,6 @@ class TestCookiesLoadedOnInit:
 
         # Capture what cookies are passed to AsyncClient
         created_cookies = {}
-        original_init = httpx.AsyncClient.__init__
 
         class MockAsyncClient(httpx.AsyncClient):
             def __init__(self, **kwargs):
