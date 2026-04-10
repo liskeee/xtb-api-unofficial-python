@@ -16,6 +16,7 @@ import stat
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 from pydantic import BaseModel
@@ -26,6 +27,9 @@ from xtb_api.types.websocket import (
     CASLoginSuccess,
     CASLoginTwoFactorRequired,
 )
+
+if TYPE_CHECKING:
+    from xtb_api.auth.browser_auth import BrowserCASAuth
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,8 @@ class CASClient:
 
     Critical: Use service='xapi5' for WebSocket, NOT 'abigail' (that's for REST API)
     """
+
+    _browser_auth: BrowserCASAuth | None = None
 
     def __init__(self, config: CASClientConfig | None = None) -> None:
         if config is not None:
@@ -499,7 +505,8 @@ class CASClient:
             # Merge existing persisted cookies with current jar
             existing = self._load_cookies()
             for cookie in client.cookies.jar:
-                existing[cookie.name] = cookie.value
+                if cookie.value is not None:
+                    existing[cookie.name] = cookie.value
             if not existing:
                 return
 
@@ -526,7 +533,8 @@ class CASClient:
         This matches ``new Date().getTimezoneOffset()`` negated.
         """
         now = datetime.now(UTC).astimezone()
-        offset_seconds = now.utcoffset().total_seconds() if now.utcoffset() else 0
+        offset = now.utcoffset()
+        offset_seconds = offset.total_seconds() if offset is not None else 0
         return str(int(offset_seconds / 60))
 
     @staticmethod
