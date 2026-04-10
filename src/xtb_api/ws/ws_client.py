@@ -572,6 +572,17 @@ class XTBWebSocketClient:
         """
         return await self._execute_trade(symbol, volume, Xs6Side.SELL, options)
 
+    def _filter_cached_symbols(self, query: str) -> list[InstrumentSearchResult]:
+        """Filter the cached symbols list by substring match (symbol/name/description)."""
+        if self._symbols_cache is None:
+            return []
+        query_lower = query.lower()
+        return [
+            s
+            for s in self._symbols_cache
+            if query_lower in s.symbol.lower() or query_lower in s.name.lower() or query_lower in s.description.lower()
+        ][:100]
+
     async def search_instrument(self, query: str) -> list[InstrumentSearchResult]:
         """Search for financial instruments with caching.
 
@@ -581,26 +592,12 @@ class XTBWebSocketClient:
         """
         # Fast path: cache already populated (no lock needed)
         if self._symbols_cache is not None:
-            query_lower = query.lower()
-            return [
-                s
-                for s in self._symbols_cache
-                if query_lower in s.symbol.lower()
-                or query_lower in s.name.lower()
-                or query_lower in s.description.lower()
-            ][:100]
+            return self._filter_cached_symbols(query)
 
         async with self._symbols_lock:
             # Re-check after acquiring lock (another coroutine may have populated it)
             if self._symbols_cache is not None:
-                query_lower = query.lower()
-                return [
-                    s
-                    for s in self._symbols_cache
-                    if query_lower in s.symbol.lower()
-                    or query_lower in s.name.lower()
-                    or query_lower in s.description.lower()
-                ][:100]
+                return self._filter_cached_symbols(query)
 
             res = await self.send(
                 "searchInstruments",
@@ -608,16 +605,10 @@ class XTBWebSocketClient:
                 timeout_ms=30000,
             )
 
-            all_symbols = parse_instruments(self._extract_elements(res))
-            self._symbols_cache = all_symbols
-            logger.info("Cached %d instruments for instant search", len(all_symbols))
+            self._symbols_cache = parse_instruments(self._extract_elements(res))
+            logger.info("Cached %d instruments for instant search", len(self._symbols_cache))
 
-        query_lower = query.lower()
-        return [
-            s
-            for s in all_symbols
-            if query_lower in s.symbol.lower() or query_lower in s.name.lower() or query_lower in s.description.lower()
-        ][:100]
+        return self._filter_cached_symbols(query)
 
     def get_account_number(self) -> int:
         """Get the account number for this WebSocket session."""

@@ -215,31 +215,37 @@ class TestTwoFactor:
 
 
 class TestGenerateTotp:
-    def test_uses_next_code_near_window_boundary(self):
-        """When <5 seconds remain in current TOTP window, use the next window's code."""
+    @pytest.mark.asyncio
+    async def test_waits_for_next_window_near_boundary(self):
+        """When <2 seconds remain in current TOTP window, sleeps until the next window."""
         mgr = AuthManager("a@b.com", "pw", totp_secret="JBSWY3DPEHPK3PXP")
 
         mock_totp = MagicMock()
         mock_totp.interval = 30
-        mock_totp.now.return_value = "111111"
-        mock_totp.at.return_value = "222222"
+        # totp.now() is only called *after* the sleep — by then the new window is current
+        mock_totp.now.return_value = "222222"
 
         mock_pyotp = MagicMock()
         mock_pyotp.TOTP.return_value = mock_totp
 
-        # 1000047 % 30 = 27, so remaining = 30 - 27 = 3 seconds left in window
+        # 1000049 % 30 = 29, so remaining = 30 - 29 = 1 second left in window (<2)
         with (
             patch.dict("sys.modules", {"pyotp": mock_pyotp}),
-            patch("xtb_api.auth.auth_manager.time.time", return_value=1000047.0),
+            patch("xtb_api.auth.auth_manager.time.time", return_value=1000049.0),
+            patch("xtb_api.auth.auth_manager.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
-            code = mgr._generate_totp()
+            code = await mgr._generate_totp()
 
-        # Should use the next window's code since <5 seconds remain
+        # Should sleep ~1.1 seconds (1 + 0.1 buffer) to clear the boundary
+        mock_sleep.assert_awaited_once()
+        sleep_arg = mock_sleep.call_args[0][0]
+        assert 1.0 < sleep_arg < 1.2
+        # Returns the (now-current) next window's code
         assert code == "222222"
-        mock_totp.at.assert_called_once()
 
-    def test_uses_current_code_when_enough_time(self):
-        """When >=5 seconds remain in current TOTP window, use current code."""
+    @pytest.mark.asyncio
+    async def test_no_sleep_when_enough_time(self):
+        """When >=2 seconds remain in current TOTP window, generates immediately."""
         mgr = AuthManager("a@b.com", "pw", totp_secret="JBSWY3DPEHPK3PXP")
 
         mock_totp = MagicMock()
@@ -249,13 +255,15 @@ class TestGenerateTotp:
         mock_pyotp = MagicMock()
         mock_pyotp.TOTP.return_value = mock_totp
 
-        # Simulate being at second 10 of the 30-second window (20 seconds left)
+        # 1000010 % 30 = 20, so remaining = 30 - 20 = 10 seconds left (>=2)
         with (
             patch.dict("sys.modules", {"pyotp": mock_pyotp}),
             patch("xtb_api.auth.auth_manager.time.time", return_value=1000010.0),
+            patch("xtb_api.auth.auth_manager.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
-            code = mgr._generate_totp()
+            code = await mgr._generate_totp()
 
+        mock_sleep.assert_not_awaited()
         assert code == "111111"
 
 
