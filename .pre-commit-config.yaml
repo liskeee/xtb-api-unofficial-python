@@ -24,3 +24,4 @@ repos:
           - pydantic>=2.5
           - httpx>=0.27
           - websockets>=13.0
+          - playwright>=1.40
