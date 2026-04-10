@@ -95,5 +95,5 @@ packages = ["xtb_api"]
 mypy_path = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["pyotp", "pyotp.*"]
+module = ["pyotp"]
 ignore_missing_imports = true

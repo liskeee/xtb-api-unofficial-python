@@ -20,9 +20,7 @@ class TestDoctorCommand:
         assert "xtb-api-python" in out
         assert "[OK]" in out
 
-    def test_doctor_returns_nonzero_when_chromium_missing(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_doctor_returns_nonzero_when_chromium_missing(self, capsys: pytest.CaptureFixture[str]) -> None:
         """With Chromium binary missing, doctor exits 1 and prints install hint."""
         with patch(
             "xtb_api.__main__._check_chromium_binary",
@@ -34,9 +32,7 @@ class TestDoctorCommand:
         assert "[FAIL]" in out
         assert "playwright install chromium" in out
 
-    def test_main_with_no_args_prints_help_and_exits_nonzero(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_main_with_no_args_prints_help_and_exits_nonzero(self, capsys: pytest.CaptureFixture[str]) -> None:
         with patch.object(sys, "argv", ["xtb-api"]):
             exit_code = main()
         assert exit_code != 0

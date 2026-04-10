@@ -52,9 +52,9 @@ class BrowserCASAuth:
     xStation5, and intercepts the TGT from CAS network responses.
     """
 
-    _browser: "Browser | None"
-    _page: "Page | None"
-    _playwright: "Playwright | None"
+    _browser: Browser | None
+    _page: Page | None
+    _playwright: Playwright | None
 
     def __init__(self, *, headless: bool = True) -> None:
         self._headless = headless
@@ -267,7 +267,7 @@ class BrowserCASAuth:
         self._page = None
         self._playwright = None
 
-    async def _on_response(self, response: "Response") -> None:
+    async def _on_response(self, response: Response) -> None:
         """Intercept network responses to extract TGT."""
         try:
             url = response.url

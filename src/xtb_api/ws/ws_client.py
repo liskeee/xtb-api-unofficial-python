@@ -715,7 +715,10 @@ class XTBWebSocketClient:
 
         if res.error:
             return TradeResult(
-                success=False, symbol=symbol, side=cast("Literal['buy', 'sell']", side_str), error=res.error.get("message", "Unknown error")
+                success=False,
+                symbol=symbol,
+                side=cast("Literal['buy', 'sell']", side_str),
+                error=res.error.get("message", "Unknown error"),
             )
 
         data = self._extract_response_data(res)

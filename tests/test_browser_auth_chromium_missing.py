@@ -37,9 +37,9 @@ class TestChromiumMissing:
         with (
             patch("playwright.async_api.async_playwright", pw_factory),
             patch.object(auth, "close", new_callable=AsyncMock),
+            pytest.raises(CASError) as exc_info,
         ):
-            with pytest.raises(CASError) as exc_info:
-                await auth.login("user@test.com", "pw")
+            await auth.login("user@test.com", "pw")
 
         assert exc_info.value.code == "BROWSER_CHROMIUM_MISSING"
         assert "playwright install chromium" in str(exc_info.value)
