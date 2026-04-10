@@ -7,6 +7,33 @@ import pytest
 from xtb_api.auth.browser_auth import BrowserCASAuth
 
 
+class TestBrowserLoginCleanup:
+    """Ensure browser resources are cleaned up on errors in login()."""
+
+    @pytest.mark.asyncio
+    async def test_close_called_on_login_error_before_2fa(self):
+        """If login() raises after browser launch but before 2FA detection, close() must be called."""
+        auth = BrowserCASAuth()
+
+        # Make chromium.launch fail mid-flow (after playwright.start() succeeded)
+        mock_pw = MagicMock()
+        mock_pw.chromium = MagicMock()
+        mock_pw.chromium.launch = AsyncMock(side_effect=RuntimeError("launch failed"))
+
+        mock_pw_factory_call = MagicMock()
+        mock_pw_factory_call.start = AsyncMock(return_value=mock_pw)
+        mock_pw_factory = MagicMock(return_value=mock_pw_factory_call)
+
+        with (
+            patch("playwright.async_api.async_playwright", mock_pw_factory),
+            patch.object(auth, "close", new_callable=AsyncMock) as mock_close,
+        ):
+            with pytest.raises(RuntimeError, match="launch failed"):
+                await auth.login("user@test.com", "pw")
+
+            mock_close.assert_awaited()
+
+
 class TestBrowserSubmitOtpCleanup:
     """Ensure browser resources are cleaned up on errors in submit_otp."""
 
