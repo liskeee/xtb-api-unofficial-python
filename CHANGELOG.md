@@ -1,6 +1,39 @@
 # Changelog
 
-## 0.2.0 (Unreleased)
+All notable changes to this project will be documented in this file.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## 0.3.0 — 2026-04-10
+
+First public PyPI release.
+
+### Added
+- MIT `LICENSE` file, author email, and PyPI project URLs in package metadata
+- Python 3.13 support and classifier
+- `python -m xtb_api doctor` command to verify installation state (Python version,
+  playwright package, Chromium binary, optional TOTP)
+- `importlib.metadata`-based `__version__` that can no longer drift from `pyproject.toml`
+- GitHub Actions release workflow with PyPI Trusted Publishing
+- Separate `mypy` and `build` CI jobs; Python 3.12 + 3.13 test matrix
+- `CONTRIBUTING.md` and `SECURITY.md`
+
+### Fixed
+- Prevent duplicate symbol downloads via `asyncio.Lock` in the WebSocket client
+- Prevent tick-subscription leak in `get_quote` when parsing fails
+- Prevent Playwright browser resource leak on auth error
+- Use the next TOTP window code when close to the 30-second boundary
+- Persist CAS cookies between restarts
+- Clearer runtime error when the Chromium browser binary is missing
+  (raises `CASError("BROWSER_CHROMIUM_MISSING", ...)` instead of a cryptic
+  playwright internal error)
+- All 25 mypy errors across `browser_auth`, `cas_client`, `auth_manager`,
+  `ws_client`, `client`, and `utils` — mypy now runs in CI
+
+### Changed
+- Bumped `Development Status` classifier from `3 - Alpha` to `4 - Beta`
+
+## 0.2.0 — 2026-04-10
 
 Major refactoring for public PyPI release. The library now provides a dead-simple, single-client API that handles all auth lifecycle transparently.
 

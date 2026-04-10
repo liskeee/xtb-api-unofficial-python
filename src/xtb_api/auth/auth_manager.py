@@ -109,9 +109,10 @@ class AuthManager:
         if self._session_file:
             cached = self._load_session_file()
             if cached:
-                self._cached_tgt = cached["tgt"]
-                self._cached_expires_at = cached["expires_at"]
-                return self._cached_tgt
+                tgt = str(cached["tgt"])
+                self._cached_tgt = tgt
+                self._cached_expires_at = float(cached["expires_at"])
+                return tgt
 
         # 3. REST CAS login
         result = await self._login_with_fallback()
@@ -233,7 +234,7 @@ class AuthManager:
             # Within 2s of window boundary — wait for the next window so the
             # generated code is guaranteed valid for its full lifetime.
             await asyncio.sleep(remaining + 0.1)
-        return totp.now()
+        return str(totp.now())
 
     def _cache_tgt(self, tgt: str, expires_at: float) -> None:
         """Cache TGT in memory and optionally to session file."""

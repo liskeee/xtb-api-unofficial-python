@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from xtb_api.auth.auth_manager import AuthManager
 from xtb_api.auth.cas_client import CASClientConfig
@@ -373,7 +373,7 @@ class XTBClient:
         return TradeResult(
             success=result.success,
             symbol=symbol,
-            side=side_str,
+            side=cast("Literal['buy', 'sell']", side_str),
             volume=float(volume),
             order_id=result.order_id,
             error=result.error,
