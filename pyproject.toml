@@ -26,6 +26,12 @@ classifiers = [
     "Typing :: Typed",
     "Framework :: AsyncIO",
 ]
+dependencies = [
+    "websockets>=13.0",
+    "pydantic>=2.5",
+    "httpx>=0.27",
+    "playwright>=1.40",
+]
 
 [project.urls]
 Homepage = "https://github.com/liskeee/xtb-api-python"
@@ -35,13 +41,6 @@ Changelog = "https://github.com/liskeee/xtb-api-python/blob/master/CHANGELOG.md"
 
 [project.scripts]
 xtb-api = "xtb_api.__main__:main"
-
-dependencies = [
-    "websockets>=13.0",
-    "pydantic>=2.5",
-    "httpx>=0.27",
-    "playwright>=1.40",
-]
 
 [project.optional-dependencies]
 totp = ["pyotp>=2.9.0"]
