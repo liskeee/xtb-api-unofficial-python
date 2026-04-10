@@ -10,16 +10,31 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 authors = [
-    { name = "Łukasz" },
+    { name = "Łukasz Lis", email = "ll.lukasz.lis@gmail.com" },
 ]
 keywords = ["xtb", "xstation5", "trading", "websocket", "api"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+    "Framework :: AsyncIO",
 ]
+
+[project.urls]
+Homepage = "https://github.com/liskeee/xtb-api-python"
+Repository = "https://github.com/liskeee/xtb-api-python"
+Issues = "https://github.com/liskeee/xtb-api-python/issues"
+Changelog = "https://github.com/liskeee/xtb-api-python/blob/master/CHANGELOG.md"
+
+[project.scripts]
+xtb-api = "xtb_api.__main__:main"
 
 dependencies = [
     "websockets>=13.0",
@@ -38,6 +53,26 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/xtb_api"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/",
+    "tests/",
+    "examples/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "pyproject.toml",
+]
+exclude = [
+    "reference-ts/",
+    ".venv/",
+    "docs/",
+    ".github/",
+    ".pytest_cache/",
+    ".ruff_cache/",
+    "uv.lock",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -59,3 +94,7 @@ disallow_untyped_defs = true
 check_untyped_defs = true
 packages = ["xtb_api"]
 mypy_path = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["pyotp", "pyotp.*"]
+ignore_missing_imports = true
