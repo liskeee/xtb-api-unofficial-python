@@ -12,3 +12,4 @@ dist/
 !.env.example
 __pycache__/
 uv.lock
+.playwright-mcp/

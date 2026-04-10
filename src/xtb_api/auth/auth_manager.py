@@ -58,6 +58,7 @@ class AuthManager:
         totp_secret: str = "",
         session_file: Path | str | None = None,
         cas_config: CASClientConfig | None = None,
+        cookies_file: Path | str | None = None,
     ) -> None:
         """
         Args:
@@ -68,11 +69,23 @@ class AuthManager:
             session_file: Path to cache TGT as JSON (optional).
                           If omitted, TGT is only cached in memory.
             cas_config: Custom CAS client configuration (optional).
+            cookies_file: Path to persist HTTP cookies as JSON (optional).
+                          If omitted but ``session_file`` is set, defaults to
+                          ``<session_file_stem>_cookies.json`` alongside it.
         """
         self._email = email
         self._password = password
         self._totp_secret = totp_secret
         self._session_file = Path(session_file).expanduser() if session_file else None
+
+        # Derive cookies_file from session_file when not explicitly provided
+        if cookies_file is None and self._session_file is not None:
+            cookies_file = self._session_file.parent / f"{self._session_file.stem}_cookies.json"
+
+        # Inject cookies_file into CAS config
+        if cookies_file is not None:
+            cas_config = (cas_config or CASClientConfig()).model_copy(update={"cookies_file": cookies_file})
+
         self._cas = CASClient(cas_config)
         self._cached_tgt: str | None = None
         self._cached_expires_at: float = 0.0

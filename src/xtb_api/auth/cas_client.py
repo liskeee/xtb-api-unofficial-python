@@ -5,10 +5,17 @@ Handles the complete auth flow: login → TGT → Service Ticket → WebSocket l
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
+import json
+import logging
+import os
 import re
+import stat
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 from pydantic import BaseModel
@@ -19,6 +26,8 @@ from xtb_api.types.websocket import (
     CASLoginSuccess,
     CASLoginTwoFactorRequired,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class CASServiceTicketResult(BaseModel):
@@ -34,6 +43,13 @@ class CASClientConfig(BaseModel):
     base_url: str = "https://xstation.xtb.com/signon/"
     timezone_offset: str | None = None
     user_agent: str = "xStation5/2.94.1 (Linux x86_64)"
+    cookies_file: Path | str | None = None
+    """Path to persist HTTP cookies (CASTGC, device fingerprint, etc.) as JSON.
+
+    When set, cookies are loaded on client creation and saved after each
+    successful login or service-ticket request.  This avoids XTB "new device"
+    emails on every restart.  File is written with ``chmod 0600``.
+    """
 
 
 class CASClient:
@@ -55,11 +71,26 @@ class CASClient:
         else:
             self._config = CASClientConfig(timezone_offset=self._get_timezone_offset())
         self._http: httpx.AsyncClient | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._cookies_path: Path | None = (
+            Path(self._config.cookies_file).expanduser() if self._config.cookies_file else None
+        )
 
     async def _ensure_http(self) -> httpx.AsyncClient:
-        """Get or create the long-lived httpx client."""
-        if self._http is None or self._http.is_closed:
-            self._http = httpx.AsyncClient(timeout=30.0)
+        """Get or create the long-lived httpx client, loading persisted cookies.
+
+        Detects event-loop changes (e.g. after ``asyncio.run()`` in
+        ``get_tgt_sync``) and replaces the stale client so we never
+        reuse an ``httpx.AsyncClient`` bound to a closed loop.
+        """
+        current_loop = asyncio.get_running_loop()
+        if self._http is None or self._http.is_closed or self._loop is not current_loop:
+            if self._http and not self._http.is_closed:
+                with contextlib.suppress(Exception):
+                    await self._http.aclose()
+            cookies = self._load_cookies()
+            self._http = httpx.AsyncClient(timeout=30.0, cookies=cookies)
+            self._loop = current_loop
         return self._http
 
     async def aclose(self) -> None:
@@ -127,6 +158,7 @@ class CASClient:
 
         # Handle success (no 2FA)
         if result.get("loginPhase") == "TGT_CREATED" and result.get("ticket"):
+            self._save_cookies(client)
             return CASLoginSuccess(
                 tgt=result["ticket"],
                 expires_at=time.time() + 8 * 3600,  # 8 hours
@@ -189,6 +221,7 @@ class CASClient:
                     f"CAS v1 Location header format invalid: {location}",
                 )
 
+            self._save_cookies(client)
             return CASLoginSuccess(
                 tgt=match.group(1),
                 expires_at=time.time() + 8 * 3600,
@@ -267,6 +300,7 @@ class CASClient:
             tgt = resp.cookies.get("CASTGT") or resp.cookies.get("CASTGC")
 
         if result.get("loginPhase") == "TGT_CREATED" and tgt:
+            self._save_cookies(client)
             return CASLoginSuccess(
                 tgt=tgt,
                 expires_at=time.time() + 8 * 3600,
@@ -274,6 +308,7 @@ class CASClient:
 
         # Some responses return TGT without explicit loginPhase
         if tgt and tgt.startswith("TGT-"):
+            self._save_cookies(client)
             return CASLoginSuccess(
                 tgt=tgt,
                 expires_at=time.time() + 8 * 3600,
@@ -330,6 +365,7 @@ class CASClient:
                 f"Invalid service ticket received: {service_ticket}",
             )
 
+        self._save_cookies(client)
         return CASServiceTicketResult(service_ticket=service_ticket, service=service)
 
     async def get_service_ticket_v2(self, tgt: str, service: str = "xapi5") -> CASServiceTicketResult:
@@ -366,6 +402,7 @@ class CASClient:
                 f"Invalid service ticket received: {service_ticket}",
             )
 
+        self._save_cookies(client)
         return CASServiceTicketResult(service_ticket=service_ticket, service=service)
 
     async def refresh_service_ticket(self, tgt: str, service: str = "xapi5") -> str:
@@ -441,6 +478,44 @@ class CASClient:
         result = await self._browser_auth.submit_otp(code)
         self._browser_auth = None
         return result
+
+    def _load_cookies(self) -> dict[str, str]:
+        """Load persisted cookies from disk, returning an empty dict on any failure."""
+        if not self._cookies_path or not self._cookies_path.exists():
+            return {}
+        try:
+            data = json.loads(self._cookies_path.read_text())
+            if isinstance(data, dict):
+                return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.debug("Could not load cookies from %s: %s", self._cookies_path, exc)
+        return {}
+
+    def _save_cookies(self, client: httpx.AsyncClient) -> None:
+        """Merge the client's cookie jar to disk as JSON with 0600 permissions."""
+        if not self._cookies_path:
+            return
+        try:
+            # Merge existing persisted cookies with current jar
+            existing = self._load_cookies()
+            for cookie in client.cookies.jar:
+                existing[cookie.name] = cookie.value
+            if not existing:
+                return
+
+            self._cookies_path.parent.mkdir(parents=True, exist_ok=True)
+            content = json.dumps(existing, indent=2)
+            fd = os.open(
+                str(self._cookies_path),
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                stat.S_IRUSR | stat.S_IWUSR,  # 0600
+            )
+            try:
+                os.write(fd, content.encode())
+            finally:
+                os.close(fd)
+        except OSError as exc:
+            logger.warning("Could not save cookies to %s: %s", self._cookies_path, exc)
 
     @staticmethod
     def _get_timezone_offset() -> str:
