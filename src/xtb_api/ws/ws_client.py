@@ -625,10 +625,12 @@ class XTBWebSocketClient:
         for key in keys_to_try:
             try:
                 res = await self.subscribe_ticks(key)
-                quote = parse_quote(self._extract_elements(res), symbol)
-                # Unsubscribe to avoid leaking subscriptions
-                with contextlib.suppress(Exception):
-                    await self.unsubscribe_ticks(key)
+                try:
+                    quote = parse_quote(self._extract_elements(res), symbol)
+                finally:
+                    # Always unsubscribe to avoid leaking subscriptions
+                    with contextlib.suppress(Exception):
+                        await self.unsubscribe_ticks(key)
                 if quote:
                     return quote
             except Exception:

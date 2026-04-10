@@ -1,7 +1,7 @@
 """Tests for WebSocket client."""
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -367,6 +367,30 @@ class TestWSClientHelpers:
         assert not client._authenticated
         assert client._login_result is None
         assert client._symbols_cache is None
+
+    @pytest.mark.asyncio
+    async def test_get_quote_unsubscribes_on_parse_error(self):
+        """If parse_quote raises, unsubscribe must still be called to prevent leaks."""
+        config = WSClientConfig(
+            url="wss://test.example.com/ws",
+            account_number=1234,
+        )
+        client = XTBWebSocketClient(config)
+
+        tick_response = WSResponse(
+            reqId="test",
+            response=[{"element": {"elements": [{"key": "9_FOO_6", "value": {}}]}}],
+        )
+
+        client.subscribe_ticks = AsyncMock(return_value=tick_response)
+        client.unsubscribe_ticks = AsyncMock()
+
+        # Make parse_quote raise
+        with patch("xtb_api.ws.ws_client.parse_quote", side_effect=ValueError("bad data")):
+            result = await client.get_quote("FOO")
+
+        # Even though parse raised, unsubscribe must have been called
+        client.unsubscribe_ticks.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_connect_already_connected_raises(self):
