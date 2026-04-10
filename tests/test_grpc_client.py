@@ -189,6 +189,66 @@ class TestGrpcClientTrading:
         assert "Connection refused" in result.error
 
 
+class TestParseTradeResponseSafety:
+    """Regression: rejected trades must never be reported as success."""
+
+    def test_rejected_trade_grpc_status_16_not_false_positive(self):
+        """grpc-status: 16 (unauthenticated) must not match as grpc-status: 0.
+
+        Before the fix, string matching 'grpc-status: 0' could match as a
+        substring in base64 error details, and a 6-byte null-prefixed binary
+        payload could pass the has_data_frame check — returning success=True
+        for actually rejected trades.
+        """
+        client = GrpcClient(account_number="12345678")
+
+        # Build a response with grpc-status: 16 (UNAUTHENTICATED) in trailer
+        # and a small data frame that starts with 0x00 (which old code treated as success)
+        data_payload = b"\x00\x00\x00\x00\x00\x00"  # 6 null bytes in data frame
+        data_frame = struct.pack(">BI", 0, len(data_payload)) + data_payload
+        trailers = b"grpc-status: 16\r\ngrpc-message: token expired\r\n"
+        trailer_frame = struct.pack(">BI", 0x80, len(trailers)) + trailers
+        response_bytes = data_frame + trailer_frame
+
+        result = client._parse_trade_response(response_bytes)
+        assert result.success is False
+        assert result.grpc_status == 16
+
+    def test_rejected_trade_with_status_0_substring_in_error_details(self):
+        """Error details containing 'grpc-status: 0' as a substring must not match.
+
+        Simulates a response where base64-encoded error details happen to
+        contain the bytes 'grpc-status: 0' but the actual trailer status != 0.
+        """
+        client = GrpcClient(account_number="12345678")
+
+        # Data frame with text that contains 'grpc-status: 0' (e.g. in error detail)
+        data_payload = b"error detail grpc-status: 0 in base64 blob"
+        data_frame = struct.pack(">BI", 0, len(data_payload)) + data_payload
+        # But actual trailer says status 7
+        trailers = b"grpc-status: 7\r\ngrpc-message: RBAC: access denied\r\n"
+        trailer_frame = struct.pack(">BI", 0x80, len(trailers)) + trailers
+        response_bytes = data_frame + trailer_frame
+
+        result = client._parse_trade_response(response_bytes)
+        assert result.success is False
+        assert result.grpc_status == 7
+        assert "RBAC" in result.error
+
+    def test_genuine_success_still_works(self):
+        """Ensure real successful trades are still parsed correctly."""
+        client = GrpcClient(account_number="12345678")
+
+        order_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        data_payload = f"order confirmed: {order_uuid}".encode()
+        response_bytes = _make_grpc_response(data_payload, grpc_status=0)
+
+        result = client._parse_trade_response(response_bytes)
+        assert result.success is True
+        assert result.order_id == order_uuid
+        assert result.grpc_status == 0
+
+
 class TestGrpcClientDisconnect:
     @pytest.mark.asyncio
     async def test_disconnect_clears_state(self):

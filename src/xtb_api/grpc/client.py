@@ -36,6 +36,7 @@ from xtb_api.grpc.proto import (
     build_grpc_web_text_body,
     build_new_market_order,
     extract_jwt,
+    parse_grpc_frames,
 )
 from xtb_api.grpc.types import GrpcTradeResult
 
@@ -259,14 +260,47 @@ class GrpcClient:
         return self._parse_trade_response(response_bytes)
 
     def _parse_trade_response(self, response_bytes: bytes) -> GrpcTradeResult:
-        """Parse gRPC-web trade response into GrpcTradeResult."""
-        response_text = response_bytes.decode("latin-1", errors="replace")
+        """Parse gRPC-web trade response into GrpcTradeResult.
 
-        # Check for explicit error status first
-        has_error_status = "grpc-status:" in response_text and "grpc-status: 0" not in response_text
-        # Success: explicit grpc-status 0, or data frame without error trailer
-        has_data_frame = len(response_bytes) > 5 and response_bytes[0] == 0
-        if "grpc-status: 0" in response_text or (has_data_frame and not has_error_status):
+        Uses proper gRPC frame parsing instead of string matching to avoid
+        false-positive success on rejected trades (e.g. 'grpc-status: 16'
+        containing '0' as a substring in error details).
+        """
+        # Parse gRPC frames: flag 0x00 = data, flag 0x80 = trailers
+        grpc_status: int | None = None
+        grpc_message: str | None = None
+        data_payload: bytes = b""
+
+        pos = 0
+        while pos + 5 <= len(response_bytes):
+            flag = response_bytes[pos]
+            import struct
+
+            length = struct.unpack(">I", response_bytes[pos + 1 : pos + 5])[0]
+            pos += 5
+            if pos + length > len(response_bytes):
+                break
+            frame_data = response_bytes[pos : pos + length]
+            pos += length
+
+            if flag & 0x80:
+                # Trailer frame — parse as HTTP/2 headers (key: value\r\n)
+                trailer_text = frame_data.decode("latin-1", errors="replace")
+                for line in trailer_text.split("\r\n"):
+                    if line.startswith("grpc-status:"):
+                        try:
+                            grpc_status = int(line.split(":", 1)[1].strip())
+                        except ValueError:
+                            pass
+                    elif line.startswith("grpc-message:"):
+                        grpc_message = line.split(":", 1)[1].strip()
+            else:
+                # Data frame
+                data_payload = frame_data
+
+        # Success requires explicit grpc-status 0 from trailer
+        if grpc_status == 0:
+            response_text = data_payload.decode("latin-1", errors="replace")
             uuid_match = re.search(
                 r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
                 response_text,
@@ -276,22 +310,19 @@ class GrpcClient:
             return GrpcTradeResult(success=True, order_id=order_id, grpc_status=0)
 
         # Error cases
-        error_msg = f"gRPC order rejected: {response_text[:200]}"
-        if "RBAC" in response_text:
+        status = grpc_status if grpc_status is not None else 0
+        response_text = response_bytes.decode("latin-1", errors="replace")
+        if grpc_message and "RBAC" in grpc_message:
             error_msg = "gRPC RBAC: access denied — JWT may be expired"
-        elif "grpc-status:" in response_text:
-            for line in response_text.split("\r\n"):
-                if line.startswith("grpc-message:"):
-                    error_msg = f"gRPC error: {line}"
-                    break
-
-        grpc_status = 0
-        status_match = re.search(r"grpc-status:\s*(\d+)", response_text)
-        if status_match:
-            grpc_status = int(status_match.group(1))
+        elif "RBAC" in response_text:
+            error_msg = "gRPC RBAC: access denied — JWT may be expired"
+        elif grpc_message:
+            error_msg = f"gRPC error: grpc-message: {grpc_message}"
+        else:
+            error_msg = f"gRPC order rejected: {response_text[:200]}"
 
         logger.error(error_msg)
-        return GrpcTradeResult(success=False, grpc_status=grpc_status, error=error_msg)
+        return GrpcTradeResult(success=False, grpc_status=status, error=error_msg)
 
     async def disconnect(self) -> None:
         """Clean up resources."""
