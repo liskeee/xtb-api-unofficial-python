@@ -206,7 +206,12 @@ class AuthManager:
         return result
 
     def _generate_totp(self) -> str:
-        """Generate a TOTP code from the stored secret."""
+        """Generate a TOTP code from the stored secret.
+
+        If fewer than 5 seconds remain in the current 30-second TOTP window,
+        returns the *next* window's code to avoid the server rejecting a code
+        that expires in transit (~6.6% failure rate without this).
+        """
         if not self._totp_secret:
             raise CASError(
                 "AUTH_MANAGER_2FA_NO_SECRET",
@@ -221,6 +226,11 @@ class AuthManager:
                 "2FA requires the pyotp package. Install with: pip install 'pyotp>=2.9.0'",
             ) from e
         totp = pyotp.TOTP(self._totp_secret)
+        now = time.time()
+        remaining = totp.interval - (now % totp.interval)
+        if remaining < 5:
+            # Near window boundary — use the next window's code
+            return totp.at(now + remaining)
         return totp.now()
 
     def _cache_tgt(self, tgt: str, expires_at: float) -> None:

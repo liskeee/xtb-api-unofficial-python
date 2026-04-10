@@ -165,6 +165,7 @@ class TestTwoFactor:
         mgr = AuthManager("a@b.com", "pw", totp_secret="JBSWY3DPEHPK3PXP")
 
         mock_pyotp_totp = MagicMock()
+        mock_pyotp_totp.interval = 30
         mock_pyotp_totp.now.return_value = "123456"
         mock_pyotp_module = MagicMock()
         mock_pyotp_module.TOTP.return_value = mock_pyotp_totp
@@ -173,6 +174,7 @@ class TestTwoFactor:
             patch.object(mgr._cas, "login", new_callable=AsyncMock) as mock_login,
             patch.object(mgr._cas, "login_with_two_factor", new_callable=AsyncMock) as mock_2fa,
             patch.dict("sys.modules", {"pyotp": mock_pyotp_module}),
+            patch("xtb_api.auth.auth_manager.time.time", return_value=1000010.0),  # mid-window (20s remaining)
         ):
             mock_login.return_value = _make_2fa()
             mock_2fa.return_value = _make_success("TGT-2fa")
@@ -210,6 +212,51 @@ class TestTwoFactor:
                 await mgr.get_tgt()
 
         assert exc_info.value.code == "AUTH_MANAGER_PYOTP_MISSING"
+
+
+class TestGenerateTotp:
+    def test_uses_next_code_near_window_boundary(self):
+        """When <5 seconds remain in current TOTP window, use the next window's code."""
+        mgr = AuthManager("a@b.com", "pw", totp_secret="JBSWY3DPEHPK3PXP")
+
+        mock_totp = MagicMock()
+        mock_totp.interval = 30
+        mock_totp.now.return_value = "111111"
+        mock_totp.at.return_value = "222222"
+
+        mock_pyotp = MagicMock()
+        mock_pyotp.TOTP.return_value = mock_totp
+
+        # 1000047 % 30 = 27, so remaining = 30 - 27 = 3 seconds left in window
+        with (
+            patch.dict("sys.modules", {"pyotp": mock_pyotp}),
+            patch("xtb_api.auth.auth_manager.time.time", return_value=1000047.0),
+        ):
+            code = mgr._generate_totp()
+
+        # Should use the next window's code since <5 seconds remain
+        assert code == "222222"
+        mock_totp.at.assert_called_once()
+
+    def test_uses_current_code_when_enough_time(self):
+        """When >=5 seconds remain in current TOTP window, use current code."""
+        mgr = AuthManager("a@b.com", "pw", totp_secret="JBSWY3DPEHPK3PXP")
+
+        mock_totp = MagicMock()
+        mock_totp.interval = 30
+        mock_totp.now.return_value = "111111"
+
+        mock_pyotp = MagicMock()
+        mock_pyotp.TOTP.return_value = mock_totp
+
+        # Simulate being at second 10 of the 30-second window (20 seconds left)
+        with (
+            patch.dict("sys.modules", {"pyotp": mock_pyotp}),
+            patch("xtb_api.auth.auth_manager.time.time", return_value=1000010.0),
+        ):
+            code = mgr._generate_totp()
+
+        assert code == "111111"
 
 
 class TestGetServiceTicket:

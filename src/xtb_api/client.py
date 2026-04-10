@@ -166,9 +166,12 @@ class XTBClient:
         take_profit: float | None = None,
         options: TradeOptions | None = None,
     ) -> TradeResult:
-        """Execute a BUY market order.
+        """Execute a BUY market order via gRPC using ``SIDE_BUY`` (value 1).
 
         ⚠️ WARNING: This executes real trades. Use demo accounts for testing.
+
+        Note: This uses the gRPC protocol side constant (``SIDE_BUY=1``),
+        which differs from the WebSocket constant (``Xs6Side.BUY=0``). Do not mix.
 
         Args:
             symbol: Symbol name (e.g., 'EURUSD', 'CIG.PL')
@@ -188,9 +191,12 @@ class XTBClient:
         take_profit: float | None = None,
         options: TradeOptions | None = None,
     ) -> TradeResult:
-        """Execute a SELL market order.
+        """Execute a SELL market order via gRPC using ``SIDE_SELL`` (value 2).
 
         ⚠️ WARNING: This executes real trades. Use demo accounts for testing.
+
+        Note: This uses the gRPC protocol side constant (``SIDE_SELL=2``),
+        which differs from the WebSocket constant (``Xs6Side.SELL=1``). Do not mix.
 
         Args:
             symbol: Symbol name (e.g., 'EURUSD', 'CIG.PL')
@@ -253,7 +259,13 @@ class XTBClient:
 
     @property
     def ws(self) -> XTBWebSocketClient:
-        """Access underlying WebSocket client for advanced use."""
+        """Access underlying WebSocket client for advanced use.
+
+        Warning: The WebSocket client's ``buy()``/``sell()`` methods use
+        ``Xs6Side`` constants (BUY=0, SELL=1), which differ from the gRPC
+        constants (SIDE_BUY=1, SIDE_SELL=2) used by ``XTBClient.buy()``/
+        ``sell()``. Do not pass side values between protocols.
+        """
         return self._ws
 
     @property

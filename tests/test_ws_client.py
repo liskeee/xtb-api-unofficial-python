@@ -1,7 +1,8 @@
 """Tests for WebSocket client."""
 
+import asyncio
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -367,6 +368,84 @@ class TestWSClientHelpers:
         assert not client._authenticated
         assert client._login_result is None
         assert client._symbols_cache is None
+
+    @pytest.mark.asyncio
+    async def test_search_instrument_concurrent_only_downloads_once(self):
+        """Two concurrent search_instrument calls should only fetch symbols once."""
+        config = WSClientConfig(
+            url="wss://test.example.com/ws",
+            account_number=1234,
+        )
+        client = XTBWebSocketClient(config)
+
+        symbol_response = WSResponse(
+            reqId="test",
+            response=[
+                {
+                    "element": {
+                        "elements": [
+                            {
+                                "key": "9_FOO.US_6",
+                                "value": {
+                                    "xcfdsymbol": {
+                                        "name": "FOO.US",
+                                        "quoteId": 1234,
+                                        "description": "Foo Inc",
+                                        "groupName": "Stocks",
+                                        "symbol": "FOO.US",
+                                        "symbolKey": "9_FOO.US_6",
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                }
+            ],
+        )
+
+        call_count = 0
+
+        async def counting_send(cmd, payload, timeout_ms=10000):
+            nonlocal call_count
+            call_count += 1
+            # Simulate some delay so both tasks overlap
+            await asyncio.sleep(0.01)
+            return symbol_response
+
+        client.send = counting_send
+
+        # Launch two concurrent searches
+        await asyncio.gather(
+            client.search_instrument("FOO"),
+            client.search_instrument("FOO"),
+        )
+
+        # send() should only be called ONCE (not twice)
+        assert call_count == 1, f"Expected 1 fetch, got {call_count}"
+
+    @pytest.mark.asyncio
+    async def test_get_quote_unsubscribes_on_parse_error(self):
+        """If parse_quote raises, unsubscribe must still be called to prevent leaks."""
+        config = WSClientConfig(
+            url="wss://test.example.com/ws",
+            account_number=1234,
+        )
+        client = XTBWebSocketClient(config)
+
+        tick_response = WSResponse(
+            reqId="test",
+            response=[{"element": {"elements": [{"key": "9_FOO_6", "value": {}}]}}],
+        )
+
+        client.subscribe_ticks = AsyncMock(return_value=tick_response)
+        client.unsubscribe_ticks = AsyncMock()
+
+        # Make parse_quote raise
+        with patch("xtb_api.ws.ws_client.parse_quote", side_effect=ValueError("bad data")):
+            await client.get_quote("FOO")
+
+        # Even though parse raised, unsubscribe must have been called
+        client.unsubscribe_ticks.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_connect_already_connected_raises(self):

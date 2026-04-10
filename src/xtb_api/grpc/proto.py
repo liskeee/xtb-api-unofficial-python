@@ -215,9 +215,11 @@ def extract_jwt(data: bytes) -> str | None:
     return match.group(0) if match else None
 
 
-# Side constants
-SIDE_BUY = 1
-SIDE_SELL = 2
+# Side constants for gRPC protocol.
+# WARNING: These differ from WebSocket Xs6Side enum (BUY=0, SELL=1).
+# Do NOT interchange with Xs6Side values — wrong side will be sent.
+SIDE_BUY = 1  # gRPC only — WebSocket uses Xs6Side.BUY=0
+SIDE_SELL = 2  # gRPC only — WebSocket uses Xs6Side.SELL=1
 
 # Content type for gRPC-web-text (base64 encoded)
 GRPC_WEB_TEXT_CONTENT_TYPE = "application/grpc-web-text"

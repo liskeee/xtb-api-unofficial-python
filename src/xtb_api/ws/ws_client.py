@@ -95,6 +95,7 @@ class XTBWebSocketClient:
         self._login_result: XLoginResult | None = None
         self._authenticated = False
         self._symbols_cache: list[InstrumentSearchResult] | None = None
+        self._symbols_lock = asyncio.Lock()
 
         # Event handlers
         self._event_handlers: dict[str, list[EventCallback]] = {}
@@ -552,16 +553,22 @@ class XTBWebSocketClient:
         return parse_orders(self._extract_elements(res))
 
     async def buy(self, symbol: str, volume: int, options: TradeOptions | None = None) -> TradeResult:
-        """Execute a BUY order.
+        """Execute a BUY order via WebSocket using ``Xs6Side.BUY`` (value 0).
 
         ⚠️ WARNING: This executes real trades. Always test on demo accounts first.
+
+        Note: This uses the WebSocket protocol side constant (``Xs6Side.BUY=0``),
+        which differs from the gRPC constant (``SIDE_BUY=1``). Do not mix.
         """
         return await self._execute_trade(symbol, volume, Xs6Side.BUY, options)
 
     async def sell(self, symbol: str, volume: int, options: TradeOptions | None = None) -> TradeResult:
-        """Execute a SELL order.
+        """Execute a SELL order via WebSocket using ``Xs6Side.SELL`` (value 1).
 
         ⚠️ WARNING: This executes real trades. Always test on demo accounts first.
+
+        Note: This uses the WebSocket protocol side constant (``Xs6Side.SELL=1``),
+        which differs from the gRPC constant (``SIDE_SELL=2``). Do not mix.
         """
         return await self._execute_trade(symbol, volume, Xs6Side.SELL, options)
 
@@ -569,8 +576,10 @@ class XTBWebSocketClient:
         """Search for financial instruments with caching.
 
         First call downloads all 11,888+ instruments and caches them.
-        Subsequent searches are instant from cache.
+        Subsequent searches are instant from cache. Uses a lock to
+        prevent concurrent callers from downloading the list multiple times.
         """
+        # Fast path: cache already populated (no lock needed)
         if self._symbols_cache is not None:
             query_lower = query.lower()
             return [
@@ -581,15 +590,27 @@ class XTBWebSocketClient:
                 or query_lower in s.description.lower()
             ][:100]
 
-        res = await self.send(
-            "searchInstruments",
-            {"getAndSubscribeElement": {"eid": SubscriptionEid.SYMBOLS}},
-            timeout_ms=30000,
-        )
+        async with self._symbols_lock:
+            # Re-check after acquiring lock (another coroutine may have populated it)
+            if self._symbols_cache is not None:
+                query_lower = query.lower()
+                return [
+                    s
+                    for s in self._symbols_cache
+                    if query_lower in s.symbol.lower()
+                    or query_lower in s.name.lower()
+                    or query_lower in s.description.lower()
+                ][:100]
 
-        all_symbols = parse_instruments(self._extract_elements(res))
-        self._symbols_cache = all_symbols
-        logger.info("Cached %d instruments for instant search", len(all_symbols))
+            res = await self.send(
+                "searchInstruments",
+                {"getAndSubscribeElement": {"eid": SubscriptionEid.SYMBOLS}},
+                timeout_ms=30000,
+            )
+
+            all_symbols = parse_instruments(self._extract_elements(res))
+            self._symbols_cache = all_symbols
+            logger.info("Cached %d instruments for instant search", len(all_symbols))
 
         query_lower = query.lower()
         return [
@@ -619,10 +640,12 @@ class XTBWebSocketClient:
         for key in keys_to_try:
             try:
                 res = await self.subscribe_ticks(key)
-                quote = parse_quote(self._extract_elements(res), symbol)
-                # Unsubscribe to avoid leaking subscriptions
-                with contextlib.suppress(Exception):
-                    await self.unsubscribe_ticks(key)
+                try:
+                    quote = parse_quote(self._extract_elements(res), symbol)
+                finally:
+                    # Always unsubscribe to avoid leaking subscriptions
+                    with contextlib.suppress(Exception):
+                        await self.unsubscribe_ticks(key)
                 if quote:
                     return quote
             except Exception:

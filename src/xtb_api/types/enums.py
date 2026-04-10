@@ -4,10 +4,15 @@ from enum import IntEnum, StrEnum
 
 
 class Xs6Side(IntEnum):
-    """Trade side enumeration for buy/sell operations."""
+    """Trade side enumeration for buy/sell operations (WebSocket protocol).
 
-    BUY = 0
-    SELL = 1
+    WARNING: These values (BUY=0, SELL=1) differ from the gRPC protocol
+    constants in ``grpc.proto`` (SIDE_BUY=1, SIDE_SELL=2). Do NOT pass
+    ``Xs6Side`` values to gRPC functions or vice-versa.
+    """
+
+    BUY = 0  # WebSocket only — gRPC uses SIDE_BUY=1
+    SELL = 1  # WebSocket only — gRPC uses SIDE_SELL=2
 
 
 class TradeCommand(IntEnum):

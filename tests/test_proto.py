@@ -18,6 +18,7 @@ from xtb_api.grpc.proto import (
     parse_grpc_frames,
     parse_proto_fields,
 )
+from xtb_api.types.enums import Xs6Side
 
 
 class TestVarint:
@@ -186,6 +187,28 @@ class TestParseProtoFields:
 
     def test_empty_data(self):
         assert parse_proto_fields(b"") == {}
+
+
+class TestSideEnumMismatch:
+    """Guard test: gRPC and WebSocket side constants are intentionally different.
+
+    Xs6Side (WebSocket): BUY=0, SELL=1
+    gRPC proto:          SIDE_BUY=1, SIDE_SELL=2
+
+    These must NOT be conflated — mixing protocols would flip trade direction.
+    """
+
+    def test_grpc_side_differs_from_ws_side(self):
+        assert Xs6Side.BUY != SIDE_BUY, "Xs6Side.BUY must differ from gRPC SIDE_BUY"
+        assert Xs6Side.SELL != SIDE_SELL, "Xs6Side.SELL must differ from gRPC SIDE_SELL"
+
+    def test_grpc_side_values(self):
+        assert SIDE_BUY == 1
+        assert SIDE_SELL == 2
+
+    def test_ws_side_values(self):
+        assert Xs6Side.BUY == 0
+        assert Xs6Side.SELL == 1
 
 
 class TestExtractJwt:
