@@ -1,5 +1,6 @@
 """Tests for CAS authentication client and AuthManager."""
 
+import asyncio
 import hashlib
 import time
 from unittest.mock import AsyncMock, patch
@@ -336,6 +337,50 @@ class TestCASClient:
         assert isinstance(result, CASLoginSuccess)
         payload = mock_client.post.call_args[1]["json"]
         assert payload["loginTicket"] == "old-session-id"
+
+
+class TestCASClientEventLoopChange:
+    """Regression test: _ensure_http must replace client after event loop changes."""
+
+    def test_stale_client_replaced_on_loop_change(self):
+        """Simulate get_tgt_sync() (asyncio.run) followed by async usage on a new loop.
+
+        Before the fix, the httpx client created inside asyncio.run() was bound
+        to the now-closed loop.  _ensure_http() would reuse it (is_closed==False)
+        and the next request would raise RuntimeError('Event loop is closed').
+        """
+        client = CASClient()
+
+        mock_resp = httpx.Response(
+            200,
+            json={"loginPhase": "TGT_CREATED", "ticket": "TGT-loop1"},
+            request=httpx.Request("POST", "https://example.com"),
+        )
+
+        async def _login_on_loop(cas):
+            mock_http = AsyncMock()
+            mock_http.post = AsyncMock(return_value=mock_resp)
+            mock_http.is_closed = False
+            with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_http):
+                await cas._ensure_http()
+            return cas._http, cas._loop
+
+        # Run on loop 1 (simulating asyncio.run inside get_tgt_sync)
+        http1, loop1 = asyncio.run(_login_on_loop(client))
+        assert http1 is not None
+        assert loop1 is not None
+
+        # Now run on loop 2 — client should be replaced, not reused
+        async def _check_on_new_loop(cas):
+            new_mock = AsyncMock()
+            new_mock.is_closed = False
+            with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=new_mock):
+                await cas._ensure_http()
+            return cas._http, cas._loop
+
+        http2, loop2 = asyncio.run(_check_on_new_loop(client))
+        assert loop2 is not loop1, "Loop should have changed"
+        assert http2 is not http1, "Client should have been replaced for new loop"
 
 
 class TestAuthManager:

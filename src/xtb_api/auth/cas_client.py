@@ -5,6 +5,7 @@ Handles the complete auth flow: login → TGT → Service Ticket → WebSocket l
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -69,15 +70,28 @@ class CASClient:
         else:
             self._config = CASClientConfig(timezone_offset=self._get_timezone_offset())
         self._http: httpx.AsyncClient | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._cookies_path: Path | None = (
             Path(self._config.cookies_file).expanduser() if self._config.cookies_file else None
         )
 
     async def _ensure_http(self) -> httpx.AsyncClient:
-        """Get or create the long-lived httpx client, loading persisted cookies."""
-        if self._http is None or self._http.is_closed:
+        """Get or create the long-lived httpx client, loading persisted cookies.
+
+        Detects event-loop changes (e.g. after ``asyncio.run()`` in
+        ``get_tgt_sync``) and replaces the stale client so we never
+        reuse an ``httpx.AsyncClient`` bound to a closed loop.
+        """
+        current_loop = asyncio.get_running_loop()
+        if self._http is None or self._http.is_closed or self._loop is not current_loop:
+            if self._http and not self._http.is_closed:
+                try:
+                    await self._http.aclose()
+                except Exception:
+                    pass
             cookies = self._load_cookies()
             self._http = httpx.AsyncClient(timeout=30.0, cookies=cookies)
+            self._loop = current_loop
         return self._http
 
     async def aclose(self) -> None:
