@@ -552,16 +552,22 @@ class XTBWebSocketClient:
         return parse_orders(self._extract_elements(res))
 
     async def buy(self, symbol: str, volume: int, options: TradeOptions | None = None) -> TradeResult:
-        """Execute a BUY order.
+        """Execute a BUY order via WebSocket using ``Xs6Side.BUY`` (value 0).
 
         ⚠️ WARNING: This executes real trades. Always test on demo accounts first.
+
+        Note: This uses the WebSocket protocol side constant (``Xs6Side.BUY=0``),
+        which differs from the gRPC constant (``SIDE_BUY=1``). Do not mix.
         """
         return await self._execute_trade(symbol, volume, Xs6Side.BUY, options)
 
     async def sell(self, symbol: str, volume: int, options: TradeOptions | None = None) -> TradeResult:
-        """Execute a SELL order.
+        """Execute a SELL order via WebSocket using ``Xs6Side.SELL`` (value 1).
 
         ⚠️ WARNING: This executes real trades. Always test on demo accounts first.
+
+        Note: This uses the WebSocket protocol side constant (``Xs6Side.SELL=1``),
+        which differs from the gRPC constant (``SIDE_SELL=2``). Do not mix.
         """
         return await self._execute_trade(symbol, volume, Xs6Side.SELL, options)
 
