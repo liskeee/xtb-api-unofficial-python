@@ -95,7 +95,8 @@ jobs:
           # Extract the section from CHANGELOG.md between "## <VERSION>" and the
           # next "## " heading. Preserves blank lines and sub-headings.
           awk -v ver="$VERSION" '
-            $0 ~ "^## " ver {found=1; next}
+            BEGIN { escaped = ver; gsub(/\./, "\\.", escaped) }
+            $0 ~ ("^## " escaped "([[:space:]]|$)") {found=1; next}
             found && /^## / {exit}
             found {print}
           ' CHANGELOG.md > release_notes.md
