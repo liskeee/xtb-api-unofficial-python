@@ -1,5 +1,6 @@
 """Tests for WebSocket client."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -367,6 +368,63 @@ class TestWSClientHelpers:
         assert not client._authenticated
         assert client._login_result is None
         assert client._symbols_cache is None
+
+    @pytest.mark.asyncio
+    async def test_search_instrument_concurrent_only_downloads_once(self):
+        """Two concurrent search_instrument calls should only fetch symbols once."""
+        config = WSClientConfig(
+            url="wss://test.example.com/ws",
+            account_number=1234,
+        )
+        client = XTBWebSocketClient(config)
+
+        symbol_response = WSResponse(
+            reqId="test",
+            response=[
+                {
+                    "element": {
+                        "elements": [
+                            {
+                                "key": "9_FOO.US_6",
+                                "value": {
+                                    "xcfdsymbol": {
+                                        "name": "FOO.US",
+                                        "quoteId": 1234,
+                                        "description": "Foo Inc",
+                                        "groupName": "Stocks",
+                                        "symbol": "FOO.US",
+                                        "symbolKey": "9_FOO.US_6",
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                }
+            ],
+        )
+
+        call_count = 0
+        original_send = client.send
+
+        async def counting_send(cmd, payload, timeout_ms=10000):
+            nonlocal call_count
+            call_count += 1
+            # Simulate some delay so both tasks overlap
+            await asyncio.sleep(0.01)
+            return symbol_response
+
+        client.send = counting_send
+
+        # Launch two concurrent searches
+        import asyncio
+
+        results = await asyncio.gather(
+            client.search_instrument("FOO"),
+            client.search_instrument("FOO"),
+        )
+
+        # send() should only be called ONCE (not twice)
+        assert call_count == 1, f"Expected 1 fetch, got {call_count}"
 
     @pytest.mark.asyncio
     async def test_get_quote_unsubscribes_on_parse_error(self):
