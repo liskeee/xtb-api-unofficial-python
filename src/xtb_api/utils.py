@@ -19,7 +19,7 @@ def price_from_decimal(price: float, precision: int) -> IPrice:
 
 def price_to_decimal(price: IPrice) -> float:
     """Convert IPrice to decimal: price_to_decimal(IPrice(value=262, scale=2)) → 2.62"""
-    return price.value * (10 ** (-price.scale))
+    return float(price.value) * float(10 ** (-price.scale))
 
 
 def volume_from(qty: int, scale: int = 0) -> IVolume:
