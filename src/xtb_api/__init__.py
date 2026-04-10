@@ -1,5 +1,8 @@
 """Unofficial Python client for XTB xStation5 trading platform."""
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
 from xtb_api.client import XTBClient
 from xtb_api.exceptions import (
     AuthenticationError,
@@ -28,7 +31,10 @@ from xtb_api.types.trading import (
     TradeResult,
 )
 
-__version__ = "0.2.0"
+try:
+    __version__ = _pkg_version("xtb-api-python")
+except PackageNotFoundError:  # pragma: no cover
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     # Client
