@@ -1,9 +1,0 @@
-[    6411ms] [WARNING] crbug/1173575, non-JS module files deprecated. @ file:///home/liske/Projects/xtb-api-python/:231
-[   13752ms] [WARNING] crbug/1173575, non-JS module files deprecated. @ file:///home/liske/Projects/xtb-api-python/src/:231
-[   17693ms] [WARNING] crbug/1173575, non-JS module files deprecated. @ file:///home/liske/Projects/xtb-api-python/src/xtb_api/:231
-[   26667ms] [WARNING] crbug/1173575, non-JS module files deprecated. @ file:///home/liske/Projects/xtb-api-python/src/xtb_api/auth/:231
-[   35339ms] [WARNING] crbug/1173575, non-JS module files deprecated. @ file:///home/liske/Projects/xtb-api-python/src/xtb_api/ws/:231
-[   36375ms] [WARNING] crbug/1173575, non-JS module files deprecated. @ file:///home/liske/Projects/xtb-api-python/src/xtb_api/grpc/:231
-[   37658ms] [WARNING] crbug/1173575, non-JS module files deprecated. @ file:///home/liske/Projects/xtb-api-python/src/xtb_api/types/:231
-[   38691ms] [WARNING] crbug/1173575, non-JS module files deprecated. @ file:///home/liske/Projects/xtb-api-python/tests/:231
-[  218807ms] [WARNING] crbug/1173575, non-JS module files deprecated. @ file:///home/liske/Projects/xtb-api-python/.git/:231
