@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import random
 import time
-from dataclasses import dataclass
+
+from pydantic import BaseModel
 
 from xtb_api.types.trading import IPrice, IVolume
 
 
 def price_from_decimal(price: float, precision: int) -> IPrice:
     """Create IPrice from decimal: price_from_decimal(2.62, 2) → IPrice(value=262, scale=2)"""
-    value = round(price * (10 ** precision))
+    value = round(price * (10**precision))
     return IPrice(value=value, scale=precision)
 
 
@@ -37,9 +37,9 @@ def build_account_id(account_number: int, endpoint: str = "meta1") -> str:
     return f"{endpoint}_{account_number}"
 
 
-@dataclass
-class ParsedSymbolKey:
+class ParsedSymbolKey(BaseModel):
     """Parsed symbol key components."""
+
     asset_class_id: int
     symbol_name: str
     group_id: int

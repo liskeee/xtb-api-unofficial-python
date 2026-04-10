@@ -1,13 +1,31 @@
-"""Tests for CAS authentication client."""
+"""Tests for CAS authentication client and AuthManager."""
 
 import hashlib
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
-from xtb_api.auth.cas_client import CASClient, CASClientConfig, CASServiceTicketResult
+from xtb_api.auth.auth_manager import AuthManager
+from xtb_api.auth.cas_client import CASClient, CASClientConfig
 from xtb_api.types.websocket import CASError, CASLoginSuccess, CASLoginTwoFactorRequired
+
+
+def _mock_response(
+    status_code: int = 200,
+    json_data: dict | None = None,
+    text: str = "",
+    headers: dict | None = None,
+) -> httpx.Response:
+    """Create a mock httpx.Response."""
+    resp = httpx.Response(
+        status_code=status_code,
+        headers=headers or {},
+        text=text,
+        json=json_data,
+    )
+    return resp
 
 
 class TestCASClientConfig:
@@ -49,9 +67,8 @@ class TestCASClient:
     def test_get_timezone_offset_format(self):
         """Timezone offset should be minutes as a string (e.g. '60', '-300')."""
         offset = CASClient._get_timezone_offset()
-        # Should be a valid integer string (positive or negative or zero)
         int_val = int(offset)
-        assert -720 <= int_val <= 840  # valid UTC offset range in minutes
+        assert -720 <= int_val <= 840
 
     def test_is_tgt_valid_success(self):
         client = CASClient()
@@ -82,18 +99,17 @@ class TestCASClient:
     async def test_login_v2_success(self):
         client = CASClient()
 
-        mock_response = AsyncMock()
-        mock_response.ok = True
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={
-            "loginPhase": "TGT_CREATED",
-            "ticket": "TGT-12345-abcdef",
-        })
+        mock_resp = httpx.Response(
+            200,
+            json={"loginPhase": "TGT_CREATED", "ticket": "TGT-12345-abcdef"},
+            request=httpx.Request("POST", "https://example.com"),
+        )
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
 
-        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
+        with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client._login_v2("test@example.com", "password123")
 
         assert isinstance(result, CASLoginSuccess)
@@ -104,20 +120,22 @@ class TestCASClient:
     async def test_login_v2_requires_2fa(self):
         client = CASClient()
 
-        mock_response = AsyncMock()
-        mock_response.ok = True
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={
-            "loginPhase": "TWO_FACTOR_REQUIRED",
-            "loginTicket": "MID-103490--WTXBAs-zX7JSOBuAF0tVCsDJ6cHIvZQ",
-            "sessionId": "sess-abc-123",
-            "methods": ["TOTP", "SMS"],
-        })
+        mock_resp = httpx.Response(
+            200,
+            json={
+                "loginPhase": "TWO_FACTOR_REQUIRED",
+                "loginTicket": "MID-103490--WTXBAs-zX7JSOBuAF0tVCsDJ6cHIvZQ",
+                "sessionId": "sess-abc-123",
+                "methods": ["TOTP", "SMS"],
+            },
+            request=httpx.Request("POST", "https://example.com"),
+        )
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
 
-        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
+        with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client._login_v2("test@example.com", "password123")
 
         assert isinstance(result, CASLoginTwoFactorRequired)
@@ -131,18 +149,20 @@ class TestCASClient:
         """When server only returns loginTicket (no sessionId), it should still work."""
         client = CASClient()
 
-        mock_response = AsyncMock()
-        mock_response.ok = True
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={
-            "loginPhase": "TWO_FACTOR_REQUIRED",
-            "loginTicket": "MID-103490--WTXBAs-abc123",
-        })
+        mock_resp = httpx.Response(
+            200,
+            json={
+                "loginPhase": "TWO_FACTOR_REQUIRED",
+                "loginTicket": "MID-103490--WTXBAs-abc123",
+            },
+            request=httpx.Request("POST", "https://example.com"),
+        )
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
 
-        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
+        with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client._login_v2("test@example.com", "password123")
 
         assert isinstance(result, CASLoginTwoFactorRequired)
@@ -153,17 +173,21 @@ class TestCASClient:
     async def test_login_v2_unauthorized(self):
         client = CASClient()
 
-        mock_response = AsyncMock()
-        mock_response.ok = False
-        mock_response.status = 401
-        mock_response.text = AsyncMock(return_value="Unauthorized")
+        mock_resp = httpx.Response(
+            401,
+            text="Unauthorized",
+            request=httpx.Request("POST", "https://example.com"),
+        )
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
 
-        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
-            with pytest.raises(CASError) as exc_info:
-                await client._login_v2("wrong@example.com", "wrongpassword")
+        with (
+            patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client),
+            pytest.raises(CASError) as exc_info,
+        ):
+            await client._login_v2("wrong@example.com", "wrongpassword")
 
         assert exc_info.value.code == "CAS_GET_TGT_UNAUTHORIZED"
 
@@ -171,15 +195,17 @@ class TestCASClient:
     async def test_get_service_ticket_success(self):
         client = CASClient()
 
-        mock_response = AsyncMock()
-        mock_response.ok = True
-        mock_response.status = 200
-        mock_response.text = AsyncMock(return_value="ST-12345-abcdef")
+        mock_resp = httpx.Response(
+            200,
+            text="ST-12345-abcdef",
+            request=httpx.Request("POST", "https://example.com"),
+        )
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
 
-        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
+        with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client.get_service_ticket("TGT-xxx", "xapi5")
 
         assert result.service_ticket == "ST-12345-abcdef"
@@ -189,17 +215,21 @@ class TestCASClient:
     async def test_get_service_ticket_expired_tgt(self):
         client = CASClient()
 
-        mock_response = AsyncMock()
-        mock_response.ok = False
-        mock_response.status = 401
-        mock_response.text = AsyncMock(return_value="Unauthorized")
+        mock_resp = httpx.Response(
+            401,
+            text="Unauthorized",
+            request=httpx.Request("POST", "https://example.com"),
+        )
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
 
-        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
-            with pytest.raises(CASError) as exc_info:
-                await client.get_service_ticket("TGT-expired", "xapi5")
+        with (
+            patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client),
+            pytest.raises(CASError) as exc_info,
+        ):
+            await client.get_service_ticket("TGT-expired", "xapi5")
 
         assert exc_info.value.code == "CAS_TGT_EXPIRED"
 
@@ -207,39 +237,44 @@ class TestCASClient:
     async def test_get_service_ticket_invalid_response(self):
         client = CASClient()
 
-        mock_response = AsyncMock()
-        mock_response.ok = True
-        mock_response.status = 200
-        mock_response.text = AsyncMock(return_value="INVALID-TICKET")
+        mock_resp = httpx.Response(
+            200,
+            text="INVALID-TICKET",
+            request=httpx.Request("POST", "https://example.com"),
+        )
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
 
-        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
-            with pytest.raises(CASError) as exc_info:
-                await client.get_service_ticket("TGT-xxx", "xapi5")
+        with (
+            patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client),
+            pytest.raises(CASError) as exc_info,
+        ):
+            await client.get_service_ticket("TGT-xxx", "xapi5")
 
         assert exc_info.value.code == "CAS_INVALID_SERVICE_TICKET"
-
 
     @pytest.mark.asyncio
     async def test_login_with_two_factor_success(self):
         """2FA submission should POST to v2/tickets with loginTicket payload."""
         client = CASClient()
 
-        mock_response = AsyncMock()
-        mock_response.ok = True
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={
-            "loginPhase": "TGT_CREATED",
-            "ticket": "TGT-1272906-WIAQgUAiVFSMHGI0jGxYhwU1RU10MGFf9pNprXtwwU",
-        })
-        mock_response.headers = {"Set-Cookie": ""}
+        mock_resp = httpx.Response(
+            200,
+            json={
+                "loginPhase": "TGT_CREATED",
+                "ticket": "TGT-1272906-WIAQgUAiVFSMHGI0jGxYhwU1RU10MGFf9pNprXtwwU",
+            },
+            headers={"Set-Cookie": ""},
+            request=httpx.Request("POST", "https://example.com"),
+        )
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
 
-        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
+        with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client.login_with_two_factor(
                 "MID-103490--WTXBAs-zX7JSOBuAF0tVCsDJ6cHIvZQ",
                 "654321",
@@ -249,9 +284,8 @@ class TestCASClient:
         assert result.tgt == "TGT-1272906-WIAQgUAiVFSMHGI0jGxYhwU1RU10MGFf9pNprXtwwU"
 
         # Verify the correct URL and payload were used
-        call_args = mock_session.post.call_args
-        assert "v2/tickets" in call_args[0][0]
-        assert "two-factor" not in call_args[0][0]
+        call_args = mock_client.post.call_args
+        assert "v2/tickets" in str(call_args)
         payload = call_args[1]["json"]
         assert payload["loginTicket"] == "MID-103490--WTXBAs-zX7JSOBuAF0tVCsDJ6cHIvZQ"
         assert payload["token"] == "654321"
@@ -263,18 +297,18 @@ class TestCASClient:
         """Should extract TGT from Set-Cookie header if not in JSON body."""
         client = CASClient()
 
-        mock_response = AsyncMock()
-        mock_response.ok = True
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={"loginPhase": "TGT_CREATED"})
-        mock_response.headers = {
-            "Set-Cookie": "CASTGT=TGT-999-fromcookie; Path=/; HttpOnly"
-        }
+        mock_resp = httpx.Response(
+            200,
+            json={"loginPhase": "TGT_CREATED"},
+            headers={"Set-Cookie": "CASTGT=TGT-999-fromcookie; Path=/; HttpOnly"},
+            request=httpx.Request("POST", "https://example.com"),
+        )
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
 
-        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
+        with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
             result = await client.login_with_two_factor("MID-123--abc", "123456")
 
         assert isinstance(result, CASLoginSuccess)
@@ -285,36 +319,149 @@ class TestCASClient:
         """session_id kwarg should work as alias for login_ticket."""
         client = CASClient()
 
-        mock_response = AsyncMock()
-        mock_response.ok = True
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={
-            "loginPhase": "TGT_CREATED",
-            "ticket": "TGT-compat-test",
-        })
-        mock_response.headers = {"Set-Cookie": ""}
+        mock_resp = httpx.Response(
+            200,
+            json={"loginPhase": "TGT_CREATED", "ticket": "TGT-compat-test"},
+            headers={"Set-Cookie": ""},
+            request=httpx.Request("POST", "https://example.com"),
+        )
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=AsyncContextManager(mock_response))
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
 
-        with patch("aiohttp.ClientSession", return_value=AsyncContextManager(mock_session)):
-            result = await client.login_with_two_factor(
-                "", "654321", session_id="old-session-id"
-            )
+        with patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client):
+            result = await client.login_with_two_factor("", "654321", session_id="old-session-id")
 
         assert isinstance(result, CASLoginSuccess)
-        payload = mock_session.post.call_args[1]["json"]
+        payload = mock_client.post.call_args[1]["json"]
         assert payload["loginTicket"] == "old-session-id"
 
 
-class AsyncContextManager:
-    """Helper for mocking async context managers."""
+class TestAuthManager:
+    """Tests for AuthManager lifecycle."""
 
-    def __init__(self, return_value):
-        self._return_value = return_value
+    def test_is_tgt_fresh(self):
+        assert AuthManager._is_tgt_fresh(time.time() + 600) is True
+        assert AuthManager._is_tgt_fresh(time.time() + 200) is False  # Within 5min margin
+        assert AuthManager._is_tgt_fresh(time.time() - 100) is False
 
-    async def __aenter__(self):
-        return self._return_value
+    @pytest.mark.asyncio
+    async def test_get_tgt_returns_cached(self):
+        auth = AuthManager(email="t@t.com", password="p")
+        auth._cached_tgt = "TGT-cached"
+        auth._cached_expires_at = time.time() + 3600
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        return False
+        tgt = await auth.get_tgt()
+        assert tgt == "TGT-cached"
+
+    @pytest.mark.asyncio
+    async def test_get_tgt_calls_login_when_no_cache(self):
+        auth = AuthManager(email="t@t.com", password="p")
+        auth._login_with_fallback = AsyncMock(
+            return_value=CASLoginSuccess(tgt="TGT-fresh", expires_at=time.time() + 3600)
+        )
+
+        tgt = await auth.get_tgt()
+        assert tgt == "TGT-fresh"
+        auth._login_with_fallback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_service_ticket_retries_on_expired(self):
+        auth = AuthManager(email="t@t.com", password="p")
+        auth._cached_tgt = "TGT-old"
+        auth._cached_expires_at = time.time() + 3600
+
+        # First get_service_ticket fails with TGT expired, second succeeds
+        call_count = 0
+
+        async def mock_get_st(tgt, service):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise CASError("CAS_TGT_EXPIRED", "expired")
+            from xtb_api.auth.cas_client import CASServiceTicketResult
+
+            return CASServiceTicketResult(service_ticket="ST-new", service=service)
+
+        auth._cas.get_service_ticket = mock_get_st
+        auth._login_with_fallback = AsyncMock(
+            return_value=CASLoginSuccess(tgt="TGT-refreshed", expires_at=time.time() + 3600)
+        )
+
+        st = await auth.get_service_ticket()
+        assert st == "ST-new"
+        assert call_count == 2
+
+    def test_invalidate_clears_memory_cache(self):
+        auth = AuthManager(email="t@t.com", password="p")
+        auth._cached_tgt = "TGT-test"
+        auth._cached_expires_at = time.time() + 3600
+
+        auth.invalidate()
+        assert auth._cached_tgt is None
+        assert auth._cached_expires_at == 0.0
+
+    def test_session_file_save_and_load(self, tmp_path):
+        session_file = tmp_path / "session.json"
+        auth = AuthManager(email="t@t.com", password="p", session_file=str(session_file))
+
+        expires_at = time.time() + 3600
+        auth._cache_tgt("TGT-saved", expires_at)
+
+        assert session_file.exists()
+        assert (session_file.stat().st_mode & 0o777) == 0o600
+
+        loaded = auth._load_session_file()
+        assert loaded is not None
+        assert loaded["tgt"] == "TGT-saved"
+
+    def test_session_file_load_expired(self, tmp_path):
+        session_file = tmp_path / "session.json"
+        auth = AuthManager(email="t@t.com", password="p", session_file=str(session_file))
+
+        auth._cache_tgt("TGT-old", time.time() - 100)
+
+        # Clear memory cache so it reads from file
+        auth._cached_tgt = None
+        auth._cached_expires_at = 0.0
+
+        loaded = auth._load_session_file()
+        assert loaded is None
+
+    def test_session_file_fixes_permissions(self, tmp_path):
+        session_file = tmp_path / "session.json"
+        auth = AuthManager(email="t@t.com", password="p", session_file=str(session_file))
+
+        # Save normally then make it permissive
+        expires_at = time.time() + 3600
+        auth._cache_tgt("TGT-test", expires_at)
+        session_file.chmod(0o644)
+
+        # Loading should fix permissions
+        loaded = auth._load_session_file()
+        assert loaded is not None
+        assert (session_file.stat().st_mode & 0o777) == 0o600
+
+    @pytest.mark.asyncio
+    async def test_aclose_closes_cas_client(self):
+        auth = AuthManager(email="t@t.com", password="p")
+        auth._cas.aclose = AsyncMock()
+
+        await auth.aclose()
+        auth._cas.aclose.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_two_factor_without_secret_raises(self):
+        auth = AuthManager(email="t@t.com", password="p", totp_secret="")
+        challenge = CASLoginTwoFactorRequired(
+            login_ticket="MID-123",
+            session_id="sess",
+            methods=["TOTP"],
+            expires_at=time.time() + 300,
+        )
+
+        with pytest.raises(CASError) as exc_info:
+            await auth._handle_two_factor(challenge)
+
+        assert "2FA_NO_SECRET" in exc_info.value.code

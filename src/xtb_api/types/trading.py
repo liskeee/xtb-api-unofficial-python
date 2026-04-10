@@ -14,35 +14,41 @@ class IPrice(BaseModel):
 
     Actual price = value × 10^(-scale)
     """
+
     value: int
     scale: int
 
 
 class IVolume(BaseModel):
     """Volume representation with value and scale."""
+
     value: int
     scale: int = 0
 
 
 class ISize(BaseModel):
     """Trade size specification — either volume or amount."""
+
     volume: IVolume | None = None
     amount: float | None = None
 
 
 class IStopLossInput(BaseModel):
     """Stop loss configuration."""
+
     price: IPrice | None = None
     trailingstopinput: dict | None = None
 
 
 class ITakeProfitInput(BaseModel):
     """Take profit configuration."""
+
     price: IPrice | None = None
 
 
 class INewMarketOrder(BaseModel):
     """Market order definition for WebSocket trading."""
+
     instrumentid: int
     size: ISize
     side: Xs6Side
@@ -52,6 +58,7 @@ class INewMarketOrder(BaseModel):
 
 class IXs6AuthAccount(BaseModel):
     """Account information for trade events."""
+
     number: int
     server: str
     currency: str
@@ -59,6 +66,7 @@ class IXs6AuthAccount(BaseModel):
 
 class INewMarketOrderEvent(BaseModel):
     """Complete market order event for WebSocket API."""
+
     order: INewMarketOrder
     uiTrackingId: str | None = None
     account: IXs6AuthAccount
@@ -66,6 +74,7 @@ class INewMarketOrderEvent(BaseModel):
 
 class TradeOptions(BaseModel):
     """Simplified trade options for high-level API."""
+
     stop_loss: float | None = None
     take_profit: float | None = None
     trailing_stop: float | None = None
@@ -74,6 +83,7 @@ class TradeOptions(BaseModel):
 
 class Position(BaseModel):
     """Open trading position information."""
+
     symbol: str
     instrument_id: int | None = None
     volume: float
@@ -93,6 +103,7 @@ class Position(BaseModel):
 
 class PendingOrder(BaseModel):
     """Pending (limit/stop) order information."""
+
     symbol: str
     instrument_id: int | None = None
     volume: float
@@ -108,6 +119,7 @@ class PendingOrder(BaseModel):
 
 class AccountBalance(BaseModel):
     """Account balance and equity information."""
+
     balance: float
     equity: float
     free_margin: float
@@ -117,6 +129,7 @@ class AccountBalance(BaseModel):
 
 class TradeResult(BaseModel):
     """Trade execution result."""
+
     success: bool
     order_id: str | None = None
     symbol: str

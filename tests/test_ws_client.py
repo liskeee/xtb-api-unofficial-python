@@ -1,14 +1,12 @@
 """Tests for WebSocket client."""
 
 import json
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from xtb_api.types.enums import SocketStatus, SubscriptionEid, Xs6Side
-from xtb_api.types.instrument import InstrumentSearchResult, Quote
-from xtb_api.types.trading import AccountBalance, Position, TradeOptions, TradeResult
+from xtb_api.exceptions import AuthenticationError, XTBConnectionError
+from xtb_api.types.enums import SocketStatus, SubscriptionEid
 from xtb_api.types.websocket import (
     WSAuthOptions,
     WSClientConfig,
@@ -56,9 +54,7 @@ class TestWSClientInit:
         config = WSClientConfig(
             url="wss://api5demoa.x-station.eu/v1/xstation",
             account_number=12345678,
-            auth=WSAuthOptions(
-                credentials=WSCredentials(email="test@test.com", password="pass")
-            ),
+            auth=WSAuthOptions(credentials=WSCredentials(email="test@test.com", password="pass")),
         )
         client = XTBWebSocketClient(config)
         assert client._cas_client is not None
@@ -112,7 +108,10 @@ class TestWSClientEvents:
         client = XTBWebSocketClient(config)
 
         results = []
-        handler = lambda d: results.append(d)
+
+        def handler(d):
+            results.append(d)
+
         client.on("event", handler)
         client.off("event", handler)
 
@@ -147,27 +146,29 @@ class TestWSClientMessageHandling:
         ticks = []
         client.on("tick", lambda t: ticks.append(t))
 
-        msg = json.dumps({
-            "reqId": "",
-            "status": 1,
-            "events": [
-                {
-                    "eid": SubscriptionEid.TICKS,
-                    "row": {
-                        "key": "9_CIG.PL_6",
-                        "value": {
-                            "xcfdtick": {
-                                "symbol": "CIG.PL",
-                                "bid": 2.62,
-                                "ask": 2.64,
-                                "high": 2.70,
-                                "low": 2.55,
-                            }
+        msg = json.dumps(
+            {
+                "reqId": "",
+                "status": 1,
+                "events": [
+                    {
+                        "eid": SubscriptionEid.TICKS,
+                        "row": {
+                            "key": "9_CIG.PL_6",
+                            "value": {
+                                "xcfdtick": {
+                                    "symbol": "CIG.PL",
+                                    "bid": 2.62,
+                                    "ask": 2.64,
+                                    "high": 2.70,
+                                    "low": 2.55,
+                                }
+                            },
                         },
-                    },
-                }
-            ],
-        })
+                    }
+                ],
+            }
+        )
 
         client._handle_message(msg)
         assert len(ticks) == 1
@@ -185,26 +186,28 @@ class TestWSClientMessageHandling:
         positions = []
         client.on("position", lambda p: positions.append(p))
 
-        msg = json.dumps({
-            "reqId": "",
-            "status": 1,
-            "events": [
-                {
-                    "eid": SubscriptionEid.POSITIONS,
-                    "row": {
-                        "key": "pos_1",
-                        "value": {
-                            "xcfdtrade": {
-                                "symbol": "AAPL.US",
-                                "side": 1,
-                                "openPrice": 150.25,
-                                "volume": 100,
-                            }
+        msg = json.dumps(
+            {
+                "reqId": "",
+                "status": 1,
+                "events": [
+                    {
+                        "eid": SubscriptionEid.POSITIONS,
+                        "row": {
+                            "key": "pos_1",
+                            "value": {
+                                "xcfdtrade": {
+                                    "symbol": "AAPL.US",
+                                    "side": 1,
+                                    "openPrice": 150.25,
+                                    "volume": 100,
+                                }
+                            },
                         },
-                    },
-                }
-            ],
-        })
+                    }
+                ],
+            }
+        )
 
         client._handle_message(msg)
         assert len(positions) == 1
@@ -221,25 +224,27 @@ class TestWSClientMessageHandling:
         symbols = []
         client.on("symbol", lambda s: symbols.append(s))
 
-        msg = json.dumps({
-            "reqId": "",
-            "status": 1,
-            "events": [
-                {
-                    "eid": SubscriptionEid.SYMBOLS,
-                    "row": {
-                        "key": "9_MSFT.US_6",
-                        "value": {
-                            "xcfdsymbol": {
-                                "name": "MSFT.US",
-                                "quoteId": 99999,
-                                "description": "Microsoft Corporation",
-                            }
+        msg = json.dumps(
+            {
+                "reqId": "",
+                "status": 1,
+                "events": [
+                    {
+                        "eid": SubscriptionEid.SYMBOLS,
+                        "row": {
+                            "key": "9_MSFT.US_6",
+                            "value": {
+                                "xcfdsymbol": {
+                                    "name": "MSFT.US",
+                                    "quoteId": 99999,
+                                    "description": "Microsoft Corporation",
+                                }
+                            },
                         },
-                    },
-                }
-            ],
-        })
+                    }
+                ],
+            }
+        )
 
         client._handle_message(msg)
         assert len(symbols) == 1
@@ -372,7 +377,7 @@ class TestWSClientHelpers:
         client = XTBWebSocketClient(config)
         client._ws = MagicMock()  # Fake existing connection
 
-        with pytest.raises(RuntimeError, match="Already connected"):
+        with pytest.raises(XTBConnectionError, match="Already connected"):
             await client.connect()
 
     @pytest.mark.asyncio
@@ -383,7 +388,7 @@ class TestWSClientHelpers:
         )
         client = XTBWebSocketClient(config)
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(XTBConnectionError, match="Not connected"):
             await client.send("test", {"ping": {}})
 
     @pytest.mark.asyncio
@@ -394,5 +399,5 @@ class TestWSClientHelpers:
         )
         client = XTBWebSocketClient(config)
 
-        with pytest.raises(RuntimeError, match="Must be authenticated"):
+        with pytest.raises(AuthenticationError, match="Must be authenticated"):
             await client.get_balance()

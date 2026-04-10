@@ -1,139 +1,97 @@
 # xtb-api-python
 
-> ⚠️ **Unofficial** — Reverse-engineered from xStation5. Not affiliated with XTB. Use at your own risk.
+> **Unofficial** — Reverse-engineered from xStation5. Not affiliated with XTB. Use at your own risk.
 
-Python port of the unofficial XTB xStation5 trading platform client.
+Python client for the XTB xStation5 trading platform. Dead-simple API that handles all authentication, token refresh, and transport selection transparently.
 
 ## Features
 
-- 🔌 **WebSocket Mode** — Direct CoreAPI protocol, no browser needed
-- 🌐 **Browser Mode** — Controls xStation5 via Chrome DevTools Protocol (Playwright)
-- 🔐 **CAS Authentication** — Full login flow (credentials → TGT → ST → session)
-- 📊 **Real-time Data** — Live quotes, positions, balance via push events
-- 💹 **Trading** — Buy/sell market orders with SL/TP
-- 🔍 **Instrument Search** — Access to 11,888+ instruments
-- 🐍 **Modern Python** — async/await, Pydantic models, type hints, Python 3.12+
+- **Single Client** — One `XTBClient` handles everything, no mode selection needed
+- **Auto Auth** — Full CAS login flow with automatic TGT/JWT refresh
+- **2FA Support** — Automatic TOTP handling when `totp_secret` is provided
+- **Real-time Data** — Live quotes, positions, balance via WebSocket push events
+- **Trading** — Buy/sell market orders with SL/TP via gRPC-web
+- **11,888+ Instruments** — Full symbol search with caching
+- **Modern Python** — async/await, Pydantic models, strict typing, Python 3.12+
 
 ## Install
 
 ```bash
-pip install -e .
+pip install xtb-api-python
 
-# With browser mode support:
-pip install -e ".[browser]"
+# With 2FA auto-handling:
+pip install "xtb-api-python[totp]"
 
-# With dev dependencies:
+# Development:
 pip install -e ".[dev]"
+
+# Install Playwright browser (required for auth):
+playwright install chromium
 ```
 
 ## Quick Start
-
-### WebSocket Mode (recommended)
-
-```python
-import asyncio
-from xtb_api import XTBClient, WSAuthOptions, WSCredentials
-
-async def main():
-    client = XTBClient.websocket(
-        url="wss://api5demoa.x-station.eu/v1/xstation",  # or api5reala for real
-        account_number=12345678,
-        auth=WSAuthOptions(
-            credentials=WSCredentials(
-                email="your@email.com",
-                password="your-password",
-            )
-        ),
-    )
-
-    await client.connect()
-
-    # Account balance
-    balance = await client.get_balance()
-    print(f"Balance: {balance.balance} {balance.currency}")
-
-    # Live quote
-    quote = await client.get_quote("CIG.PL")
-    if quote:
-        print(f"Bid: {quote.bid}, Ask: {quote.ask}")
-
-    # Open positions
-    positions = await client.get_positions()
-
-    # Search instruments
-    results = await client.search_instrument("Apple")
-
-    # Execute trade (USE WITH CAUTION!)
-    # from xtb_api import TradeOptions
-    # await client.buy("AAPL.US", 1, TradeOptions(stop_loss=150))
-
-    await client.disconnect()
-
-asyncio.run(main())
-```
-
-### Browser Mode
-
-Requires Chrome with xStation5 open and remote debugging enabled:
-
-```bash
-google-chrome --remote-debugging-port=9222 https://xstation5.xtb.com
-```
 
 ```python
 import asyncio
 from xtb_api import XTBClient
 
 async def main():
-    client = XTBClient.browser("ws://127.0.0.1:9222")
-    await client.connect()
-    # Same API as WebSocket mode
-    await client.disconnect()
-
-asyncio.run(main())
-```
-
-### gRPC-web Mode
-
-Executes trades via gRPC-web through Chrome DevTools Protocol. Requires Chrome with xStation5 open and remote debugging enabled:
-
-```bash
-google-chrome --remote-debugging-port=18800 https://xstation5.xtb.com
-```
-
-```python
-import asyncio
-from xtb_api import GrpcClient
-
-async def main():
-    client = GrpcClient(
-        cdp_url="http://localhost:18800",
-        account_number="51984891",
-        account_server="XS-real1",
+    client = XTBClient(
+        email="your@email.com",
+        password="your-password",
+        account_number=12345678,
+        totp_secret="BASE32SECRET",      # optional, auto-handles 2FA
+        session_file="~/.xtb_session",   # optional, persists auth across restarts
     )
 
     await client.connect()
 
-    # Get JWT (requires TGT from CAS auth)
-    jwt = await client.get_jwt(tgt="YOUR_TGT_HERE")
+    # Account data
+    balance = await client.get_balance()
+    print(f"Balance: {balance.balance} {balance.currency}")
 
-    # Execute trade (instrument_id is gRPC ID, not WebSocket quoteId)
-    result = await client.buy(instrument_id=9438, volume=1)  # CIG.PL
-    print(f"Success: {result.success}, Order: {result.order_id}")
+    positions = await client.get_positions()
+    orders = await client.get_orders()
+
+    # Live quote
+    quote = await client.get_quote("EURUSD")
+    if quote:
+        print(f"Bid: {quote.bid}, Ask: {quote.ask}")
+
+    # Search instruments
+    results = await client.search_instrument("Apple")
+
+    # Trading (USE WITH CAUTION!)
+    result = await client.buy("AAPL.US", volume=1, stop_loss=150.0, take_profit=200.0)
+    print(f"Order: {result.order_id}")
 
     await client.disconnect()
 
 asyncio.run(main())
 ```
 
-### Push Events (WebSocket mode)
+### Real-time Events
 
 ```python
-ws = client.ws
+client.on("tick", lambda tick: print(f"{tick['symbol']}: {tick['bid']}/{tick['ask']}"))
+client.on("position", lambda pos: print(f"Position update: {pos['symbol']}"))
 
-ws.on("tick", lambda tick: print(f"{tick['symbol']}: {tick['bid']}/{tick['ask']}"))
-ws.on("position", lambda pos: print(f"Position update: {pos['symbol']}"))
-ws.on("authenticated", lambda info: print(f"Logged in: {info}"))
+await client.subscribe_ticks("EURUSD")
+```
+
+### Advanced Trade Options
+
+```python
+from xtb_api import TradeOptions
+
+# Simple: flat kwargs
+await client.buy("EURUSD", volume=1, stop_loss=1.0850, take_profit=1.0950)
+
+# Advanced: TradeOptions object
+await client.sell("CIG.PL", volume=100, options=TradeOptions(
+    trailing_stop=50,
+    amount=1000.0,  # amount-based sizing
+))
 ```
 
 ## API Reference
@@ -143,58 +101,88 @@ ws.on("authenticated", lambda info: print(f"Logged in: {info}"))
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `connect()` | `None` | Connect and authenticate |
-| `disconnect()` | `None` | Disconnect |
+| `disconnect()` | `None` | Disconnect and clean up |
 | `get_balance()` | `AccountBalance` | Account balance, equity, free margin |
-| `get_positions()` | `list[Position]` | Open positions |
+| `get_positions()` | `list[Position]` | Open trading positions |
+| `get_orders()` | `list[PendingOrder]` | Pending limit/stop orders |
 | `get_quote(symbol)` | `Quote \| None` | Current bid/ask for a symbol |
 | `search_instrument(query)` | `list[InstrumentSearchResult]` | Search instruments |
-| `buy(symbol, volume, opts?)` | `TradeResult` | Execute buy order |
-| `sell(symbol, volume, opts?)` | `TradeResult` | Execute sell order |
+| `buy(symbol, volume, ...)` | `TradeResult` | Execute BUY order |
+| `sell(symbol, volume, ...)` | `TradeResult` | Execute SELL order |
+| `on(event, callback)` | `None` | Register event handler |
+| `subscribe_ticks(symbol)` | `None` | Subscribe to real-time ticks |
 
-### Symbol Key Format
+### Constructor Parameters
 
-Symbols use the format `{assetClassId}_{symbolName}_{groupId}`:
-- `9_CIG.PL_6` — CI Games on Warsaw Stock Exchange
-- `9_AAPL.US_6` — Apple on NASDAQ
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `email` | Yes | — | XTB account email |
+| `password` | Yes | — | XTB account password |
+| `account_number` | Yes | — | XTB account number |
+| `totp_secret` | No | `""` | Base32 TOTP secret for auto 2FA |
+| `session_file` | No | `None` | Path to persist auth session |
+| `ws_url` | No | Real server | WebSocket endpoint URL |
+| `endpoint` | No | `"meta1"` | Server endpoint name |
+| `account_server` | No | `"XS-real1"` | gRPC account server |
+| `auto_reconnect` | No | `True` | Auto-reconnect on disconnect |
 
 ### WebSocket URLs
 
 | Environment | URL |
 |-------------|-----|
-| Real | `wss://api5reala.x-station.eu/v1/xstation` |
+| Real | `wss://api5reala.x-station.eu/v1/xstation` (default) |
 | Demo | `wss://api5demoa.x-station.eu/v1/xstation` |
+
+### Advanced: Direct Access
+
+For advanced use cases, access the underlying clients:
+
+```python
+# WebSocket client (always available)
+ws = client.ws
+
+# gRPC client (available after first trade)
+grpc = client.grpc_client
+
+# Auth manager
+auth = client.auth
+tgt = await auth.get_tgt()
+```
 
 ## Architecture
 
 ```
-src/xtb_api/
-  auth/          CAS authentication (TGT → Service Ticket)
-  browser/       Chrome DevTools Protocol client (Playwright)
-  grpc/          gRPC-web trading via Chrome CDP
-  ws/            WebSocket CoreAPI client
-  types/         Pydantic models & enums
-  client.py      Unified high-level client
-  utils.py       Price/volume conversion helpers
+XTBClient (public facade)
+|
++-- AuthManager (shared auth session)
+|   +-- CASClient (REST + Playwright browser auth)
+|   +-- TGT cache (memory + disk)
+|
++-- XTBWebSocketClient (quotes, positions, balance)
+|   +-- Auto-reconnect with fresh service tickets
+|
++-- GrpcClient (trading, lazy-initialized)
+    +-- JWT auto-refresh from shared TGT
 ```
 
 ## How Authentication Works
 
-xStation5 uses a CAS (Central Authentication Service) flow:
+1. **Login** — REST CAS attempt, falls back to Playwright browser if WAF blocks
+2. **TGT** — 8-hour token, cached in memory + optional session file
+3. **Service Ticket** — Derived from TGT, used for WebSocket login
+4. **JWT** — 5-minute token for gRPC trading, auto-refreshed from TGT
+5. **2FA** — Automatic TOTP if `totp_secret` provided
 
-1. **Login** → POST credentials to CAS → receive TGT (Ticket Granting Ticket)
-2. **Service Ticket** → POST TGT to CAS with `service=xapi5` → receive ST
-3. **WebSocket** → Connect → `registerClientInfo` → `loginWithServiceTicket(ST)`
-4. **Session** → Receive account list, start subscribing to data
+All token refresh is transparent. If a TGT expires mid-session, the full auth chain re-runs automatically.
 
-## ⚠️ Disclaimer
+## Disclaimer
 
-This is an **unofficial**, community-driven project. It is NOT affiliated with, endorsed by, or connected to XTB S.A. in any way.
+This is an **unofficial**, community-driven project. NOT affiliated with, endorsed by, or connected to XTB S.A.
 
 - **Use at your own risk** — trading involves financial risk
-- **No warranty** — this software is provided "as is"
+- **No warranty** — provided "as is"
 - **API stability** — XTB may change their internal APIs at any time
-- **Terms of Service** — users are responsible for compliance with XTB's terms
-- **Not for production** without thorough testing on a demo account first
+- **Always test on demo accounts first**
 
 ## License
 

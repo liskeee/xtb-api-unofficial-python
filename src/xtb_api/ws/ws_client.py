@@ -7,43 +7,54 @@ Provides real-time data subscriptions and trading capabilities via WebSocket.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import inspect
 import json
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import websockets
 import websockets.asyncio.client
 
+if TYPE_CHECKING:
+    from xtb_api.auth.auth_manager import AuthManager
+
 from xtb_api.auth.cas_client import CASClient
+from xtb_api.exceptions import (
+    AuthenticationError,
+    ProtocolError,
+    ReconnectionError,
+    XTBConnectionError,
+    XTBTimeoutError,
+)
 from xtb_api.types.enums import SocketStatus, SubscriptionEid, Xs6Side
 from xtb_api.types.instrument import InstrumentSearchResult, Quote
 from xtb_api.types.trading import (
     AccountBalance,
-    INewMarketOrder,
-    INewMarketOrderEvent,
-    ISize,
-    IXs6AuthAccount,
     PendingOrder,
     Position,
     TradeOptions,
     TradeResult,
 )
 from xtb_api.types.websocket import (
-    CASLoginSuccess,
     CASLoginTwoFactorRequired,
     ClientInfo,
-    WSAuthOptions,
     WSClientConfig,
-    WSPushEvent,
-    WSPushEventRow,
     WSPushMessage,
     WSResponse,
     XLoginAccountInfo,
     XLoginResult,
 )
 from xtb_api.utils import build_account_id, price_from_decimal, volume_from
+from xtb_api.ws.parsers import (
+    parse_balance,
+    parse_instruments,
+    parse_orders,
+    parse_positions,
+    parse_quote,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +73,13 @@ class XTBWebSocketClient:
     - Direct trading via tradeTransaction commands
     """
 
-    def __init__(self, config: WSClientConfig) -> None:
+    def __init__(
+        self,
+        config: WSClientConfig,
+        auth_manager: AuthManager | None = None,
+    ) -> None:
         self._config = config
+        self._auth_manager = auth_manager
         self._ws: websockets.asyncio.client.ClientConnection | None = None
         self._status = SocketStatus.CLOSED
         self._pending_requests: dict[str, asyncio.Future[WSResponse]] = {}
@@ -72,6 +88,9 @@ class XTBWebSocketClient:
         self._listen_task: asyncio.Task[None] | None = None
         self._reconnect_delay = 1.0
         self._reconnecting = False
+        self._reconnect_attempts = 0
+        self._max_reconnect_attempts = 10
+        self._intentional_disconnect = False
         self._cas_client: CASClient | None = None
         self._login_result: XLoginResult | None = None
         self._authenticated = False
@@ -138,12 +157,21 @@ class XTBWebSocketClient:
             handlers.remove(callback)
 
     def _emit(self, event: str, *args: Any) -> None:
-        """Emit event to all registered handlers."""
+        """Emit event to all registered handlers.
+
+        Supports both sync and async callbacks. Async callbacks are
+        scheduled on the running event loop.
+        """
         for handler in self._event_handlers.get(event, []):
             try:
-                handler(*args)
-            except Exception as e:
-                logger.error(f"Error in event handler for '{event}': {e}")
+                result = handler(*args)
+                if inspect.iscoroutine(result):
+                    try:
+                        asyncio.get_running_loop().create_task(result)
+                    except RuntimeError:
+                        result.close()  # Prevent "coroutine never awaited" warning
+            except Exception:
+                logger.error("Error in event handler for '%s'", event, exc_info=True)
 
     # ─── Connection ───
 
@@ -155,7 +183,7 @@ class XTBWebSocketClient:
             Exception: If connection or authentication fails
         """
         if self._ws is not None:
-            raise RuntimeError("Already connected or connecting")
+            raise XTBConnectionError("Already connected or connecting")
 
         await self._establish_connection()
 
@@ -171,13 +199,14 @@ class XTBWebSocketClient:
                 self._config.url,
                 max_size=20 * 1024 * 1024,  # 20MB for large symbol lists
             )
-        except Exception as e:
+        except Exception:
             self._update_status(SocketStatus.ERROR)
             raise
 
         self._update_status(SocketStatus.CONNECTED)
         self._reconnect_delay = 1.0
         self._reconnecting = False
+        self._reconnect_attempts = 0
         self._start_ping()
         self._start_listen()
         self._emit("connected")
@@ -207,9 +236,7 @@ class XTBWebSocketClient:
                     auth.credentials.email, auth.credentials.password
                 )
             else:
-                login_result = await self._cas_client.login(
-                    auth.credentials.email, auth.credentials.password
-                )
+                login_result = await self._cas_client.login(auth.credentials.email, auth.credentials.password)
 
             if isinstance(login_result, CASLoginTwoFactorRequired):
                 self._emit(
@@ -224,49 +251,55 @@ class XTBWebSocketClient:
                 )
                 return  # Wait for 2FA completion
 
-            ticket_result = await self._cas_client.get_service_ticket(
-                login_result.tgt, "xapi5"
-            )
+            ticket_result = await self._cas_client.get_service_ticket(login_result.tgt, "xapi5")
             service_ticket = ticket_result.service_ticket
         else:
-            raise RuntimeError("No valid authentication method provided")
+            raise AuthenticationError("No valid authentication method provided")
 
         # Register client info then login
         await self.register_client_info()
         await self.login_with_service_ticket(service_ticket)
 
     def disconnect(self) -> None:
-        """Disconnect from the WebSocket server."""
-        self._config.auto_reconnect = False
-        if self._ws:
+        """Disconnect from the WebSocket server.
+
+        Prefers async close when a running loop is available.
+        Falls back to cleanup-only when called outside async context.
+        """
+        self._intentional_disconnect = True
+        ws = self._ws  # Capture before cleanup nulls it
+        if ws:
             self._update_status(SocketStatus.DISCONNECTING)
-            asyncio.get_event_loop().create_task(self._close_ws())
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._close_ws_ref(ws))
+            except RuntimeError:
+                pass  # No running loop — ws will be cleaned up below
         self._cleanup()
+
+    async def _close_ws_ref(self, ws: Any) -> None:
+        """Close a specific WebSocket connection reference."""
+        with contextlib.suppress(Exception):
+            await ws.close()
 
     async def _close_ws(self) -> None:
         """Close WebSocket connection."""
         if self._ws:
-            try:
+            with contextlib.suppress(Exception):
                 await self._ws.close()
-            except Exception:
-                pass
 
     async def disconnect_async(self) -> None:
         """Async disconnect from the WebSocket server."""
-        self._config.auto_reconnect = False
+        self._intentional_disconnect = True
         if self._ws:
             self._update_status(SocketStatus.DISCONNECTING)
-            try:
+            with contextlib.suppress(Exception):
                 await self._ws.close()
-            except Exception:
-                pass
         self._cleanup()
 
     # ─── Send Commands ───
 
-    async def send(
-        self, command_name: str, payload: dict[str, Any], timeout_ms: int = 10000
-    ) -> WSResponse:
+    async def send(self, command_name: str, payload: dict[str, Any], timeout_ms: int = 10000) -> WSResponse:
         """Send a raw CoreAPI command and wait for response.
 
         Args:
@@ -282,7 +315,7 @@ class XTBWebSocketClient:
             TimeoutError: If request times out
         """
         if not self.is_connected or not self._ws:
-            raise RuntimeError("Not connected")
+            raise XTBConnectionError("Not connected")
 
         req_id = self._next_req_id(command_name)
 
@@ -300,16 +333,16 @@ class XTBWebSocketClient:
             "command": [{"CoreAPI": core_api}],
         }
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future: asyncio.Future[WSResponse] = loop.create_future()
         self._pending_requests[req_id] = future
 
         try:
             await self._ws.send(json.dumps(request))
             return await asyncio.wait_for(future, timeout=timeout_ms / 1000)
-        except asyncio.TimeoutError:
+        except TimeoutError as e:
             self._pending_requests.pop(req_id, None)
-            raise TimeoutError(f"Request {req_id} timed out")
+            raise XTBTimeoutError(f"Request {req_id} timed out") from e
 
     # ─── Subscriptions ───
 
@@ -385,17 +418,17 @@ class XTBWebSocketClient:
         # Parse login result
         resp_list = response.response or []
         if not resp_list:
-            raise RuntimeError(f"Login failed: empty response")
+            raise AuthenticationError("Login failed: empty response")
 
         first = resp_list[0] if resp_list else {}
         if not isinstance(first, dict):
-            raise RuntimeError(f"Login failed: unexpected response format")
+            raise ProtocolError("Login failed: unexpected response format")
 
         login_data = first.get("xloginresult")
         if not login_data:
             exception = first.get("exception", {})
             error_msg = exception.get("message", "") if isinstance(exception, dict) else str(exception)
-            raise RuntimeError(f"Login failed: {error_msg or 'Unknown error'}")
+            raise AuthenticationError(f"Login failed: {error_msg or 'Unknown error'}")
 
         # Parse accountList
         account_list = []
@@ -448,7 +481,7 @@ class XTBWebSocketClient:
             RuntimeError: If CAS client not available
         """
         if not self._cas_client:
-            raise RuntimeError("No CAS client available - authentication not started")
+            raise AuthenticationError("No CAS client available - authentication not started")
 
         # Route OTP to browser auth if active
         if getattr(self, "_browser_auth_active", False):
@@ -456,9 +489,7 @@ class XTBWebSocketClient:
             self._browser_auth_active = False
         else:
             ticket = login_ticket or session_id or ""
-            two_factor_result = await self._cas_client.login_with_two_factor(
-                ticket, code, two_factor_auth_type
-            )
+            two_factor_result = await self._cas_client.login_with_two_factor(ticket, code, two_factor_auth_type)
 
         if isinstance(two_factor_result, CASLoginTwoFactorRequired):
             self._emit(
@@ -473,9 +504,7 @@ class XTBWebSocketClient:
             )
             return
 
-        ticket_result = await self._cas_client.get_service_ticket(
-            two_factor_result.tgt, "xapi5"
-        )
+        ticket_result = await self._cas_client.get_service_ticket(two_factor_result.tgt, "xapi5")
         await self.register_client_info()
         await self.login_with_service_ticket(ticket_result.service_ticket)
 
@@ -484,7 +513,7 @@ class XTBWebSocketClient:
     async def get_balance(self) -> AccountBalance:
         """Get account balance and equity information."""
         if not self._authenticated or not self._login_result:
-            raise RuntimeError("Must be authenticated to get balance")
+            raise AuthenticationError("Must be authenticated to get balance")
 
         account = None
         for acc in self._login_result.accountList:
@@ -494,32 +523,14 @@ class XTBWebSocketClient:
         if not account and self._login_result.accountList:
             account = self._login_result.accountList[0]
         if not account:
-            raise RuntimeError("Account not found in login result")
+            raise ProtocolError("Account not found in login result")
 
         res = await self.send(
             "getBalance",
             {"getAndSubscribeElement": {"eid": SubscriptionEid.TOTAL_BALANCE}},
         )
 
-        elements = self._extract_elements(res)
-        if elements:
-            balance_data = (elements[0] or {}).get("value", {}).get("xtotalbalance")
-            if balance_data:
-                return AccountBalance(
-                    balance=float(balance_data.get("balance", 0)),
-                    equity=float(balance_data.get("equity", 0)),
-                    free_margin=float(balance_data.get("freeMargin", 0)),
-                    currency=account.currency,
-                    account_number=account.accountNo,
-                )
-
-        return AccountBalance(
-            balance=0.0,
-            equity=0.0,
-            free_margin=0.0,
-            currency=account.currency,
-            account_number=account.accountNo,
-        )
+        return parse_balance(self._extract_elements(res), account.currency, account.accountNo)
 
     async def get_positions(self) -> list[Position]:
         """Get all open trading positions."""
@@ -529,36 +540,7 @@ class XTBWebSocketClient:
             timeout_ms=30000,
         )
 
-        elements = self._extract_elements(res)
-        positions: list[Position] = []
-
-        for el in elements:
-            trade = (el or {}).get("value", {}).get("xcfdtrade")
-            if not trade:
-                continue
-
-            side_val = int(trade.get("side", 0))
-            positions.append(
-                Position(
-                    symbol=str(trade.get("symbol", "")),
-                    instrument_id=int(trade["idQuote"]) if trade.get("idQuote") is not None else None,
-                    volume=float(trade.get("volume", 0)),
-                    current_price=0.0,
-                    open_price=float(trade.get("openPrice", 0)),
-                    stop_loss=float(trade["sl"]) if trade.get("sl") and trade["sl"] != 0 else None,
-                    take_profit=float(trade["tp"]) if trade.get("tp") and trade["tp"] != 0 else None,
-                    profit_percent=0.0,
-                    profit_net=0.0,
-                    swap=float(trade["swap"]) if trade.get("swap") is not None else None,
-                    side="buy" if side_val == Xs6Side.BUY else "sell",
-                    order_id=str(trade["positionId"]) if trade.get("positionId") is not None else None,
-                    commission=float(trade["commission"]) if trade.get("commission") is not None else None,
-                    margin=float(trade["margin"]) if trade.get("margin") is not None else None,
-                    open_time=int(trade["openTime"]) if trade.get("openTime") is not None else None,
-                )
-            )
-
-        return positions
+        return parse_positions(self._extract_elements(res))
 
     async def get_orders(self) -> list[PendingOrder]:
         """Get all pending (limit/stop) orders."""
@@ -567,45 +549,16 @@ class XTBWebSocketClient:
             {"getAndSubscribeElement": {"eid": SubscriptionEid.ORDERS}},
         )
 
-        elements = self._extract_elements(res)
-        orders: list[PendingOrder] = []
+        return parse_orders(self._extract_elements(res))
 
-        for el in elements:
-            trade = (el or {}).get("value", {}).get("xcfdtrade")
-            if not trade:
-                continue
-
-            side_val = int(trade.get("side", 0))
-            orders.append(
-                PendingOrder(
-                    symbol=str(trade.get("symbol", "")),
-                    instrument_id=int(trade["idQuote"]) if trade.get("idQuote") is not None else None,
-                    volume=float(trade.get("volume", 0)),
-                    price=float(trade.get("openPrice", 0)),
-                    stop_loss=float(trade["sl"]) if trade.get("sl") and trade["sl"] != 0 else None,
-                    take_profit=float(trade["tp"]) if trade.get("tp") and trade["tp"] != 0 else None,
-                    side="buy" if side_val == Xs6Side.BUY else "sell",
-                    order_id=str(trade["positionId"]) if trade.get("positionId") is not None else None,
-                    order_type=str(trade.get("orderType", "")),
-                    expiration=int(trade["expiration"]) if trade.get("expiration") is not None else None,
-                    open_time=int(trade["openTime"]) if trade.get("openTime") is not None else None,
-                )
-            )
-
-        return orders
-
-    async def buy(
-        self, symbol: str, volume: int, options: TradeOptions | None = None
-    ) -> TradeResult:
+    async def buy(self, symbol: str, volume: int, options: TradeOptions | None = None) -> TradeResult:
         """Execute a BUY order.
 
         ⚠️ WARNING: This executes real trades. Always test on demo accounts first.
         """
         return await self._execute_trade(symbol, volume, Xs6Side.BUY, options)
 
-    async def sell(
-        self, symbol: str, volume: int, options: TradeOptions | None = None
-    ) -> TradeResult:
+    async def sell(self, symbol: str, volume: int, options: TradeOptions | None = None) -> TradeResult:
         """Execute a SELL order.
 
         ⚠️ WARNING: This executes real trades. Always test on demo accounts first.
@@ -634,34 +587,15 @@ class XTBWebSocketClient:
             timeout_ms=30000,
         )
 
-        elements = self._extract_elements(res)
-        all_symbols: list[InstrumentSearchResult] = []
-
-        for el in elements:
-            sym = (el or {}).get("value", {}).get("xcfdsymbol")
-            if not sym:
-                continue
-            all_symbols.append(
-                InstrumentSearchResult(
-                    symbol=str(sym.get("name", "")),
-                    instrument_id=int(sym.get("instrumentId", sym.get("quoteId", 0))),
-                    name=str(sym.get("description", sym.get("name", ""))),
-                    description=str(sym.get("description", "")),
-                    asset_class=str(sym.get("idAssetClass", "")),
-                    symbol_key=f"{sym.get('idAssetClass')}_{sym.get('name')}_{sym.get('groupId', sym.get('quoteId'))}",
-                )
-            )
-
+        all_symbols = parse_instruments(self._extract_elements(res))
         self._symbols_cache = all_symbols
-        logger.info(f"Cached {len(all_symbols)} instruments for instant search")
+        logger.info("Cached %d instruments for instant search", len(all_symbols))
 
         query_lower = query.lower()
         return [
             s
             for s in all_symbols
-            if query_lower in s.symbol.lower()
-            or query_lower in s.name.lower()
-            or query_lower in s.description.lower()
+            if query_lower in s.symbol.lower() or query_lower in s.name.lower() or query_lower in s.description.lower()
         ][:100]
 
     def get_account_number(self) -> int:
@@ -685,19 +619,12 @@ class XTBWebSocketClient:
         for key in keys_to_try:
             try:
                 res = await self.subscribe_ticks(key)
-                elements = self._extract_elements(res)
-                if elements:
-                    tick = (elements[0] or {}).get("value", {}).get("xcfdtick")
-                    if tick:
-                        return Quote(
-                            symbol=str(tick.get("symbol", symbol)),
-                            ask=float(tick.get("ask", 0)),
-                            bid=float(tick.get("bid", 0)),
-                            spread=float(tick.get("ask", 0)) - float(tick.get("bid", 0)),
-                            high=float(tick["high"]) if tick.get("high") is not None else None,
-                            low=float(tick["low"]) if tick.get("low") is not None else None,
-                            time=int(tick["timestamp"]) if tick.get("timestamp") is not None else None,
-                        )
+                quote = parse_quote(self._extract_elements(res), symbol)
+                # Unsubscribe to avoid leaking subscriptions
+                with contextlib.suppress(Exception):
+                    await self.unsubscribe_ticks(key)
+                if quote:
+                    return quote
             except Exception:
                 continue
 
@@ -869,7 +796,7 @@ class XTBWebSocketClient:
                 except Exception:
                     pass
 
-        self._ping_task = asyncio.get_event_loop().create_task(ping_loop())
+        self._ping_task = asyncio.get_running_loop().create_task(ping_loop())
 
     def _stop_ping(self) -> None:
         """Stop ping keepalive task."""
@@ -886,32 +813,57 @@ class XTBWebSocketClient:
             try:
                 async for message in self._ws:
                     if isinstance(message, (str, bytes)):
-                        self._handle_message(
-                            message if isinstance(message, str) else message.decode()
-                        )
+                        self._handle_message(message if isinstance(message, str) else message.decode())
             except websockets.exceptions.ConnectionClosed as e:
                 self._cleanup()
                 self._update_status(SocketStatus.CLOSED)
                 self._emit("disconnected", e.code, str(e.reason))
-                if self._config.auto_reconnect and not self._reconnecting:
-                    asyncio.get_event_loop().create_task(self._schedule_reconnect())
+                if self._config.auto_reconnect and not self._reconnecting and not self._intentional_disconnect:
+                    asyncio.get_running_loop().create_task(self._schedule_reconnect())
             except Exception as e:
                 self._emit("error", e)
 
-        self._listen_task = asyncio.get_event_loop().create_task(listen_loop())
+        self._listen_task = asyncio.get_running_loop().create_task(listen_loop())
 
     async def _schedule_reconnect(self) -> None:
-        """Schedule reconnection with exponential backoff."""
+        """Schedule reconnection with exponential backoff.
+
+        If an AuthManager is available, obtains a fresh service ticket
+        for re-authentication instead of reusing the (possibly stale) original.
+
+        Raises ReconnectionError after max_reconnect_attempts failures.
+        """
         self._reconnecting = True
+        self._reconnect_attempts += 1
+
+        if self._reconnect_attempts > self._max_reconnect_attempts:
+            self._reconnecting = False
+            error = ReconnectionError(f"Exhausted {self._max_reconnect_attempts} reconnection attempts")
+            self._emit("error", error)
+            return
+
         await asyncio.sleep(self._reconnect_delay)
         self._reconnect_delay = min(
             self._reconnect_delay * 1.5,
             self._config.max_reconnect_delay / 1000,
         )
         try:
-            await self.connect()
-        except Exception:
-            pass
+            if self._auth_manager:
+                # Get fresh ST from AuthManager (handles TGT refresh if needed)
+                fresh_st = await self._auth_manager.get_service_ticket()
+                await self._establish_connection()
+                await self.register_client_info()
+                await self.login_with_service_ticket(fresh_st)
+            else:
+                await self.connect()
+        except Exception as e:
+            logger.warning("Reconnection attempt %d failed: %s", self._reconnect_attempts, e)
+            self._reconnecting = False
+            if self._config.auto_reconnect and self._reconnect_attempts < self._max_reconnect_attempts:
+                asyncio.get_running_loop().create_task(self._schedule_reconnect())
+            elif self._reconnect_attempts >= self._max_reconnect_attempts:
+                error = ReconnectionError(f"Exhausted {self._max_reconnect_attempts} reconnection attempts")
+                self._emit("error", error)
 
     def _cleanup(self) -> None:
         """Clean up connection resources."""
@@ -920,9 +872,9 @@ class XTBWebSocketClient:
             self._listen_task.cancel()
             self._listen_task = None
 
-        for req_id, future in self._pending_requests.items():
+        for _req_id, future in self._pending_requests.items():
             if not future.done():
-                future.set_exception(RuntimeError("Connection closed"))
+                future.set_exception(XTBConnectionError("Connection closed"))
         self._pending_requests.clear()
         self._ws = None
         self._authenticated = False

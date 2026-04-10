@@ -6,11 +6,12 @@ Handles the complete auth flow: login → TGT → Service Ticket → WebSocket l
 from __future__ import annotations
 
 import hashlib
+import re
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-import aiohttp
+import httpx
+from pydantic import BaseModel
 
 from xtb_api.types.websocket import (
     CASError,
@@ -20,16 +21,16 @@ from xtb_api.types.websocket import (
 )
 
 
-@dataclass
-class CASServiceTicketResult:
+class CASServiceTicketResult(BaseModel):
     """Result from service ticket request."""
+
     service_ticket: str
     service: str
 
 
-@dataclass
-class CASClientConfig:
+class CASClientConfig(BaseModel):
     """CAS client configuration."""
+
     base_url: str = "https://xstation.xtb.com/signon/"
     timezone_offset: str | None = None
     user_agent: str = "xStation5/2.94.1 (Linux x86_64)"
@@ -47,9 +48,25 @@ class CASClient:
     """
 
     def __init__(self, config: CASClientConfig | None = None) -> None:
-        self._config = config or CASClientConfig()
-        if self._config.timezone_offset is None:
-            self._config.timezone_offset = self._get_timezone_offset()
+        if config is not None:
+            # Avoid mutating caller's config — fill in timezone if missing
+            tz = config.timezone_offset if config.timezone_offset is not None else self._get_timezone_offset()
+            self._config = config.model_copy(update={"timezone_offset": tz})
+        else:
+            self._config = CASClientConfig(timezone_offset=self._get_timezone_offset())
+        self._http: httpx.AsyncClient | None = None
+
+    async def _ensure_http(self) -> httpx.AsyncClient:
+        """Get or create the long-lived httpx client."""
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(timeout=30.0)
+        return self._http
+
+    async def aclose(self) -> None:
+        """Close the underlying httpx client."""
+        if self._http and not self._http.is_closed:
+            await self._http.aclose()
+            self._http = None
 
     async def login(self, email: str, password: str) -> CASLoginResult:
         """Login with email/password using CAS v2 with v1 fallback.
@@ -73,7 +90,7 @@ class CASClient:
                 try:
                     return await self._login_v1(email, password)
                 except CASError:
-                    raise e
+                    raise e from None
             raise
 
     async def _login_v2(self, email: str, password: str) -> CASLoginResult:
@@ -94,19 +111,19 @@ class CASClient:
             "User-Agent": self._config.user_agent,
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                if resp.status == 401:
-                    raise CASError("CAS_GET_TGT_UNAUTHORIZED", "Invalid credentials")
+        client = await self._ensure_http()
+        resp = await client.post(url, json=payload, headers=headers)
 
-                if not resp.ok:
-                    error_text = await resp.text()
-                    raise CASError(
-                        "CAS_LOGIN_FAILED",
-                        f"CAS v2 login failed: {resp.status} {error_text}",
-                    )
+        if resp.status_code == 401:
+            raise CASError("CAS_GET_TGT_UNAUTHORIZED", "Invalid credentials")
 
-                result = await resp.json()
+        if not resp.is_success:
+            raise CASError(
+                "CAS_LOGIN_FAILED",
+                f"CAS v2 login failed: {resp.status_code} {resp.text}",
+            )
+
+        result = resp.json()
 
         # Handle success (no 2FA)
         if result.get("loginPhase") == "TGT_CREATED" and result.get("ticket"):
@@ -148,47 +165,42 @@ class CASClient:
         """Login using CAS v1 (fallback, no 2FA support)."""
         url = f"{self._config.base_url}v1/tickets"
 
-        form_data = aiohttp.FormData()
-        form_data.add_field("username", email)
-        form_data.add_field("password", password)
+        form_data = {"username": email, "password": password}
 
         headers = {
             "User-Agent": self._config.user_agent,
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url, data=form_data, headers=headers, allow_redirects=False
-            ) as resp:
-                if resp.status == 201:
-                    location = resp.headers.get("location", "")
-                    if not location:
-                        raise CASError(
-                            "CAS_V1_NO_LOCATION",
-                            "CAS v1 login succeeded but no Location header found",
-                        )
+        client = await self._ensure_http()
+        resp = await client.post(url, data=form_data, headers=headers)
 
-                    import re
-                    match = re.search(r"/tickets/([^/]+)$", location)
-                    if not match:
-                        raise CASError(
-                            "CAS_V1_INVALID_LOCATION",
-                            f"CAS v1 Location header format invalid: {location}",
-                        )
-
-                    return CASLoginSuccess(
-                        tgt=match.group(1),
-                        expires_at=time.time() + 8 * 3600,
-                    )
-
-                if resp.status == 401:
-                    raise CASError("CAS_GET_TGT_UNAUTHORIZED", "Invalid credentials")
-
-                error_text = await resp.text()
+        if resp.status_code == 201:
+            location = resp.headers.get("location", "")
+            if not location:
                 raise CASError(
-                    "CAS_V1_LOGIN_FAILED",
-                    f"CAS v1 login failed: {resp.status} {error_text}",
+                    "CAS_V1_NO_LOCATION",
+                    "CAS v1 login succeeded but no Location header found",
                 )
+
+            match = re.search(r"/tickets/([^/]+)$", location)
+            if not match:
+                raise CASError(
+                    "CAS_V1_INVALID_LOCATION",
+                    f"CAS v1 Location header format invalid: {location}",
+                )
+
+            return CASLoginSuccess(
+                tgt=match.group(1),
+                expires_at=time.time() + 8 * 3600,
+            )
+
+        if resp.status_code == 401:
+            raise CASError("CAS_GET_TGT_UNAUTHORIZED", "Invalid credentials")
+
+        raise CASError(
+            "CAS_V1_LOGIN_FAILED",
+            f"CAS v1 login failed: {resp.status_code} {resp.text}",
+        )
 
     async def login_with_two_factor(
         self,
@@ -238,27 +250,21 @@ class CASClient:
             "User-Agent": self._config.user_agent,
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                if not resp.ok:
-                    error_text = await resp.text()
-                    raise CASError(
-                        "CAS_2FA_REQUEST_FAILED",
-                        f"2FA request failed: {resp.status} {error_text}",
-                    )
+        client = await self._ensure_http()
+        resp = await client.post(url, json=payload, headers=headers)
 
-                result = await resp.json()
+        if not resp.is_success:
+            raise CASError(
+                "CAS_2FA_REQUEST_FAILED",
+                f"2FA request failed: {resp.status_code} {resp.text}",
+            )
 
-                # Extract TGT from response body or Set-Cookie header
-                tgt = result.get("ticket") or result.get("tgt")
-                if not tgt:
-                    # Try Set-Cookie: CASTGT=TGT-xxx; ...
-                    set_cookie = resp.headers.get("Set-Cookie", "")
-                    for part in set_cookie.split(";"):
-                        part = part.strip()
-                        if part.startswith("CASTGT="):
-                            tgt = part[len("CASTGT="):]
-                            break
+        result = resp.json()
+
+        # Extract TGT from response body or cookies
+        tgt = result.get("ticket") or result.get("tgt")
+        if not tgt:
+            tgt = resp.cookies.get("CASTGT") or resp.cookies.get("CASTGC")
 
         if result.get("loginPhase") == "TGT_CREATED" and tgt:
             return CASLoginSuccess(
@@ -282,9 +288,7 @@ class CASClient:
             f"Unexpected 2FA response: {result}",
         )
 
-    async def get_service_ticket(
-        self, tgt: str, service: str = "xapi5"
-    ) -> CASServiceTicketResult:
+    async def get_service_ticket(self, tgt: str, service: str = "xapi5") -> CASServiceTicketResult:
         """Get Service Ticket using TGT via CAS v1 endpoint.
 
         Args:
@@ -296,46 +300,39 @@ class CASClient:
         """
         return await self._get_service_ticket_v1(tgt, service)
 
-    async def _get_service_ticket_v1(
-        self, tgt: str, service: str
-    ) -> CASServiceTicketResult:
+    async def _get_service_ticket_v1(self, tgt: str, service: str) -> CASServiceTicketResult:
         """Get Service Ticket via CAS v1 endpoint."""
         url = f"{self._config.base_url}v1/tickets/{tgt}"
 
-        form_data = aiohttp.FormData()
-        form_data.add_field("service", service)
+        form_data = {"service": service}
 
         headers = {
             "User-Agent": self._config.user_agent,
             "Cookie": f"CASTGC={tgt}",
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=form_data, headers=headers) as resp:
-                if resp.status == 401:
-                    raise CASError("CAS_TGT_EXPIRED", "TGT has expired or is invalid")
+        client = await self._ensure_http()
+        resp = await client.post(url, data=form_data, headers=headers)
 
-                if not resp.ok:
-                    error_text = await resp.text()
-                    raise CASError(
-                        "CAS_SERVICE_TICKET_FAILED",
-                        f"CAS v1 service ticket request failed: {resp.status} {error_text}",
-                    )
+        if resp.status_code == 401:
+            raise CASError("CAS_TGT_EXPIRED", "TGT has expired or is invalid")
 
-                service_ticket = (await resp.text()).strip()
-                if not service_ticket or not service_ticket.startswith("ST-"):
-                    raise CASError(
-                        "CAS_INVALID_SERVICE_TICKET",
-                        f"Invalid service ticket received: {service_ticket}",
-                    )
+        if not resp.is_success:
+            raise CASError(
+                "CAS_SERVICE_TICKET_FAILED",
+                f"CAS v1 service ticket request failed: {resp.status_code} {resp.text}",
+            )
 
-                return CASServiceTicketResult(
-                    service_ticket=service_ticket, service=service
-                )
+        service_ticket = resp.text.strip()
+        if not service_ticket or not service_ticket.startswith("ST-"):
+            raise CASError(
+                "CAS_INVALID_SERVICE_TICKET",
+                f"Invalid service ticket received: {service_ticket}",
+            )
 
-    async def get_service_ticket_v2(
-        self, tgt: str, service: str = "xapi5"
-    ) -> CASServiceTicketResult:
+        return CASServiceTicketResult(service_ticket=service_ticket, service=service)
+
+    async def get_service_ticket_v2(self, tgt: str, service: str = "xapi5") -> CASServiceTicketResult:
         """Get Service Ticket via CAS v2 endpoint (alternative method)."""
         url = f"{self._config.base_url}v2/serviceTicket"
 
@@ -348,34 +345,30 @@ class CASClient:
             "Cookie": f"CASTGC={tgt}",
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                if resp.status == 401:
-                    raise CASError("CAS_TGT_EXPIRED", "TGT has expired or is invalid")
+        client = await self._ensure_http()
+        resp = await client.post(url, json=payload, headers=headers)
 
-                if not resp.ok:
-                    error_text = await resp.text()
-                    raise CASError(
-                        "CAS_SERVICE_TICKET_FAILED",
-                        f"CAS v2 service ticket request failed: {resp.status} {error_text}",
-                    )
+        if resp.status_code == 401:
+            raise CASError("CAS_TGT_EXPIRED", "TGT has expired or is invalid")
 
-                result = await resp.json()
-                service_ticket = result.get("serviceTicket") or result.get("ticket")
+        if not resp.is_success:
+            raise CASError(
+                "CAS_SERVICE_TICKET_FAILED",
+                f"CAS v2 service ticket request failed: {resp.status_code} {resp.text}",
+            )
 
-                if not service_ticket or not service_ticket.startswith("ST-"):
-                    raise CASError(
-                        "CAS_INVALID_SERVICE_TICKET",
-                        f"Invalid service ticket received: {service_ticket}",
-                    )
+        result = resp.json()
+        service_ticket = result.get("serviceTicket") or result.get("ticket")
 
-                return CASServiceTicketResult(
-                    service_ticket=service_ticket, service=service
-                )
+        if not service_ticket or not service_ticket.startswith("ST-"):
+            raise CASError(
+                "CAS_INVALID_SERVICE_TICKET",
+                f"Invalid service ticket received: {service_ticket}",
+            )
 
-    async def refresh_service_ticket(
-        self, tgt: str, service: str = "xapi5"
-    ) -> str:
+        return CASServiceTicketResult(service_ticket=service_ticket, service=service)
+
+    async def refresh_service_ticket(self, tgt: str, service: str = "xapi5") -> str:
         """Refresh service ticket using existing TGT.
 
         Service tickets are single-use and expire after 2-5 minutes.
@@ -385,13 +378,11 @@ class CASClient:
             return result.service_ticket
         except CASError as e:
             if e.code == "CAS_TGT_EXPIRED":
-                raise CASError("CAS_TGT_EXPIRED", "TGT has expired, please login again")
+                raise CASError("CAS_TGT_EXPIRED", "TGT has expired, please login again") from e
             raise
 
     def is_tgt_valid(self, login_result: CASLoginResult) -> bool:
         """Check if TGT is still valid (local expiration check only)."""
-        if isinstance(login_result, CASLoginSuccess):
-            return time.time() < login_result.expires_at
         return time.time() < login_result.expires_at
 
     def get_tgt_from_result(self, login_result: CASLoginResult) -> str | None:
@@ -400,9 +391,7 @@ class CASClient:
             return login_result.tgt
         return None
 
-    async def login_with_browser(
-        self, email: str, password: str, *, headless: bool = True
-    ) -> CASLoginResult:
+    async def login_with_browser(self, email: str, password: str, *, headless: bool = True) -> CASLoginResult:
         """Login using browser-based authentication (Playwright).
 
         Bypasses Akamai WAF by using a real browser to perform the login flow.
@@ -421,11 +410,11 @@ class CASClient:
         """
         try:
             from xtb_api.auth.browser_auth import BrowserCASAuth
-        except ImportError:
+        except ImportError as e:
             raise CASError(
                 "BROWSER_AUTH_UNAVAILABLE",
                 "Browser auth requires playwright. Install with: pip install playwright && playwright install chromium",
-            )
+            ) from e
 
         self._browser_auth = BrowserCASAuth(headless=headless)
         return await self._browser_auth.login(email, password)
@@ -461,7 +450,7 @@ class CASClient:
         east of UTC (e.g. "60" for CET/UTC+1, "120" for CEST/UTC+2).
         This matches ``new Date().getTimezoneOffset()`` negated.
         """
-        now = datetime.now(timezone.utc).astimezone()
+        now = datetime.now(UTC).astimezone()
         offset_seconds = now.utcoffset().total_seconds() if now.utcoffset() else 0
         return str(int(offset_seconds / 60))
 
