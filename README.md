@@ -1,3 +1,8 @@
+[![PyPI version](https://img.shields.io/pypi/v/xtb-api-python.svg)](https://pypi.org/project/xtb-api-python/)
+[![Python versions](https://img.shields.io/pypi/pyversions/xtb-api-python.svg)](https://pypi.org/project/xtb-api-python/)
+[![CI](https://github.com/liskeee/xtb-api-python/actions/workflows/ci.yml/badge.svg)](https://github.com/liskeee/xtb-api-python/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 # xtb-api-python
 
 > **Unofficial** — Reverse-engineered from xStation5. Not affiliated with XTB. Use at your own risk.
@@ -14,19 +19,46 @@ Python client for the XTB xStation5 trading platform. Dead-simple API that handl
 - **11,888+ Instruments** — Full symbol search with caching
 - **Modern Python** — async/await, Pydantic models, strict typing, Python 3.12+
 
+## Requirements
+
+- Python **3.12 or 3.13**
+- Chromium browser (installed via playwright — see post-install step below)
+- An XTB trading account
+
 ## Install
 
 ```bash
 pip install xtb-api-python
 
-# With 2FA auto-handling:
+# With automatic 2FA handling:
 pip install "xtb-api-python[totp]"
+```
 
-# Development:
-pip install -e ".[dev]"
+### Post-install setup (REQUIRED)
 
-# Install Playwright browser (required for auth):
+This library uses [Playwright](https://playwright.dev/python/) to authenticate with
+XTB's servers (the REST login path is blocked by a WAF). **After** `pip install`,
+you must download the Chromium binary:
+
+```bash
 playwright install chromium
+```
+
+Without this step, the first call to `client.connect()` will fail with a
+`CASError("BROWSER_CHROMIUM_MISSING", ...)` and a pointer back here.
+
+To verify your install is complete, run:
+
+```bash
+python -m xtb_api doctor
+```
+
+### Development install
+
+```bash
+pip install -e ".[dev,totp]"
+playwright install chromium
+pre-commit install
 ```
 
 ## Quick Start
