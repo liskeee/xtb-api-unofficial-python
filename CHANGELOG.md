@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v0.5.1 (2026-04-15)
+
+### Bug Fixes
+
+- **ci**: Chain Release workflow from Semantic Release via workflow_call
+  ([`b0c2b7a`](https://github.com/liskeee/xtb-api-unofficial-python/commit/b0c2b7a364feae18655595c6c0ed93da604ead5f))
+
+The Release workflow listens on release:published, but events triggered by GITHUB_TOKEN (used by
+  python-semantic-release) do not fire downstream workflows. As a result, v0.5.0 was tagged and
+  released but never built or published to PyPI.
+
+Add workflow_call trigger to Release with a tag input, and invoke it as a dependent job from
+  Semantic Release when psr reports released=true. The release:published trigger is kept for manual
+  releases.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+### Chores
+
+- Remove dangling reference-ts submodule gitlink
+  ([`930a9b7`](https://github.com/liskeee/xtb-api-unofficial-python/commit/930a9b7497141bb169f4902c8612a20690873b9e))
+
+The tree contained a gitlink at reference-ts with no matching entry in .gitmodules, which caused a
+  `No url found for submodule path 'reference-ts'` warning in every workflow checkout cleanup step.
+  The local reference-ts/ clone is retained on disk and now gitignored.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+
 ## v0.5.0 (2026-04-15)
 
 ### Chores
