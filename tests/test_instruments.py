@@ -114,3 +114,20 @@ async def test_populate_merges_with_existing(tmp_path: Path) -> None:
     # But the persisted file preserves the prior entries.
     saved = json.loads(path.read_text())
     assert saved == {"OLD.PL": 99, "NEW.PL": 2}
+
+
+def test_registry_ignores_corrupt_file(tmp_path: Path) -> None:
+    """A corrupt/malformed cache file should degrade gracefully to empty, not raise."""
+    path = tmp_path / "ids.json"
+    path.write_text("not valid json{{{")
+    reg = InstrumentRegistry(path)
+    assert reg.get("ANY") is None
+
+
+def test_registry_ignores_wrong_shape_file(tmp_path: Path) -> None:
+    """If the file is valid JSON but not dict[str, int], ignore and log."""
+    path = tmp_path / "ids.json"
+    import json as _json
+    path.write_text(_json.dumps({"AAPL.US": "not-an-int"}))
+    reg = InstrumentRegistry(path)
+    assert reg.get("AAPL.US") is None

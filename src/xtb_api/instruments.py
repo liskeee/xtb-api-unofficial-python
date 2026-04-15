@@ -14,11 +14,13 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol
 
+from xtb_api.types.instrument import InstrumentSearchResult
+
 logger = logging.getLogger(__name__)
 
 
 class _SearchClient(Protocol):
-    async def search_instrument(self, query: str) -> list: ...
+    async def search_instrument(self, query: str) -> list[InstrumentSearchResult]: ...
 
 
 class InstrumentRegistry:
@@ -48,10 +50,19 @@ class InstrumentRegistry:
         if not self._path.exists():
             return
         try:
-            self._ids = json.loads(self._path.read_text())
-            logger.info("Loaded %d instrument IDs from %s", len(self._ids), self._path)
+            raw = json.loads(self._path.read_text())
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Failed to load instrument IDs from %s: %s", self._path, exc)
+            return
+        if not isinstance(raw, dict) or not all(
+            isinstance(k, str) and isinstance(v, int) for k, v in raw.items()
+        ):
+            logger.warning(
+                "Instrument ID file %s has unexpected structure, ignoring", self._path
+            )
+            return
+        self._ids = raw
+        logger.info("Loaded %d instrument IDs from %s", len(self._ids), self._path)
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -83,17 +94,24 @@ class InstrumentRegistry:
         appear in the downloaded list, fall back to the dot-less variant
         (`BRKB.US`).
 
+        Symbols are stored under the caller's original casing; subsequent
+        calls to `get()` must use the same case.
+
         Returns a dict of the matches written during this call (does not
         include pre-existing entries).
         """
-        # Try to pull from the WS client's in-memory symbols cache to avoid
-        # a redundant network call. Fall back to a live search_instrument query.
-        all_results: list = []
-        ws = getattr(client, "ws", None) or client
-        cache = getattr(ws, "_symbols_cache", None)
-        if cache and not callable(cache):
-            all_results = list(cache)
+        # Prime the client's in-memory cache (first call downloads all 11,888+
+        # instruments under the WS client's lock). Then read the full cache
+        # directly — search_instrument() only returns up to 100 filtered matches,
+        # which isn't enough for matching against a full universe.
+        await client.search_instrument("a")
+
+        ws = getattr(client, "ws", client)
+        raw = getattr(ws, "_symbols_cache", None)
+        if isinstance(raw, list) and raw:
+            all_results: list[InstrumentSearchResult] = list(raw)
         else:
+            # Fallback when caller isn't an XTBClient (e.g., pure protocol implementer).
             all_results = await client.search_instrument("a")
 
         index = {r.symbol.upper(): r.instrument_id for r in all_results}
@@ -104,9 +122,10 @@ class InstrumentRegistry:
             if key in index:
                 matched[sym] = index[key]
                 continue
-            # Dot-less fallback: BRK.B.US → BRKB.US
+            # Dot-less fallback: BRK.B.US → BRKB.US. Skip symbols with no inner
+            # dots (e.g. AAPL.US) where the dot-less variant would be identical.
             base, _, suffix = key.rpartition(".")
-            if base:
+            if base and "." in base:
                 alt = base.replace(".", "") + "." + suffix
                 if alt in index:
                     matched[sym] = index[alt]
