@@ -1,4 +1,5 @@
 """XTBClient.buy/sell must reject volume < 1 before touching gRPC."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -12,7 +13,9 @@ from xtb_api.types.trading import TradeResult
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> XTBClient:
     c = XTBClient(
-        email="x@y.z", password="p", account_number=1,
+        email="x@y.z",
+        password="p",
+        account_number=1,
         session_file=None,
     )
     # Stub auth + WS + gRPC so no real I/O happens.
@@ -57,7 +60,8 @@ async def test_buy_rejects_negative_volume(client: XTBClient) -> None:
 async def test_buy_accepts_volume_one(client: XTBClient, monkeypatch: pytest.MonkeyPatch) -> None:
     # Stub instrument resolution and gRPC success so the happy path completes.
     monkeypatch.setattr(
-        client, "_resolve_instrument_id",
+        client,
+        "_resolve_instrument_id",
         AsyncMock(return_value=123),
     )
     client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
@@ -81,9 +85,7 @@ async def test_buy_rejects_fractional_below_half(client: XTBClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_buy_accepts_fractional_at_half(
-    client: XTBClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_buy_accepts_fractional_at_half(client: XTBClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """volume=0.5 rounds up to 1 and must pass validation."""
     monkeypatch.setattr(client, "_resolve_instrument_id", AsyncMock(return_value=123))
     client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]

@@ -1,4 +1,5 @@
 """InstrumentRegistry — persistent JSON cache of symbol → instrument-ID."""
+
 from __future__ import annotations
 
 import json
@@ -59,11 +60,13 @@ def test_registry_accepts_str_path(tmp_path: Path) -> None:
 async def test_populate_matches_symbols(tmp_path: Path) -> None:
     reg = InstrumentRegistry(tmp_path / "ids.json")
     client = MagicMock()
-    client.search_instrument = AsyncMock(return_value=[
-        _isr("CIG.PL", 100),
-        _isr("AAPL.US", 200),
-        _isr("EURUSD", 300),
-    ])
+    client.search_instrument = AsyncMock(
+        return_value=[
+            _isr("CIG.PL", 100),
+            _isr("AAPL.US", 200),
+            _isr("EURUSD", 300),
+        ]
+    )
 
     matched = await reg.populate(client, ["CIG.PL", "AAPL.US"])
 
@@ -128,6 +131,7 @@ def test_registry_ignores_wrong_shape_file(tmp_path: Path) -> None:
     """If the file is valid JSON but not dict[str, int], ignore and log."""
     path = tmp_path / "ids.json"
     import json as _json
+
     path.write_text(_json.dumps({"AAPL.US": "not-an-int"}))
     reg = InstrumentRegistry(path)
     assert reg.get("AAPL.US") is None

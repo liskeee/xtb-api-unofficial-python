@@ -1,4 +1,5 @@
 """XTBClient.buy/sell populate TradeResult.price from a post-trade position poll."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -23,8 +24,12 @@ def _make_client(monkeypatch: pytest.MonkeyPatch) -> XTBClient:
 
 def _pos(symbol: str, price: float) -> Position:
     return Position(
-        symbol=symbol, volume=1, open_price=price,
-        current_price=price, side="buy", order_id="O1",
+        symbol=symbol,
+        volume=1,
+        open_price=price,
+        current_price=price,
+        side="buy",
+        order_id="O1",
     )
 
 
@@ -50,9 +55,7 @@ async def test_fill_price_retries_three_times(monkeypatch: pytest.MonkeyPatch) -
         return_value=MagicMock(success=True, order_id="O1", error=None)
     )
     # First two polls: empty. Third poll: position shows up.
-    client._ws.get_positions = AsyncMock(
-        side_effect=[[], [], [_pos("CIG.PL", 99.0)]]
-    )
+    client._ws.get_positions = AsyncMock(side_effect=[[], [], [_pos("CIG.PL", 99.0)]])
     # Zero sleep so the test isn't slow.
     monkeypatch.setattr("asyncio.sleep", AsyncMock())
 
@@ -74,7 +77,7 @@ async def test_fill_price_none_when_position_never_appears(monkeypatch: pytest.M
     result = await client.buy("CIG.PL", volume=1)
 
     assert result.success is True  # trade still succeeded
-    assert result.price is None     # but we couldn't determine fill price
+    assert result.price is None  # but we couldn't determine fill price
 
 
 @pytest.mark.asyncio

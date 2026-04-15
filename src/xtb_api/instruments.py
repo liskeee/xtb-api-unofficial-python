@@ -6,6 +6,7 @@ every trade is slow; caching it in memory only loses the mapping on restart.
 
 This module persists the mapping to disk as JSON so restarts stay cheap.
 """
+
 from __future__ import annotations
 
 import json
@@ -54,12 +55,8 @@ class InstrumentRegistry:
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Failed to load instrument IDs from %s: %s", self._path, exc)
             return
-        if not isinstance(raw, dict) or not all(
-            isinstance(k, str) and isinstance(v, int) for k, v in raw.items()
-        ):
-            logger.warning(
-                "Instrument ID file %s has unexpected structure, ignoring", self._path
-            )
+        if not isinstance(raw, dict) or not all(isinstance(k, str) and isinstance(v, int) for k, v in raw.items()):
+            logger.warning("Instrument ID file %s has unexpected structure, ignoring", self._path)
             return
         self._ids = raw
         logger.info("Loaded %d instrument IDs from %s", len(self._ids), self._path)

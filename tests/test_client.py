@@ -374,6 +374,7 @@ class TestXTBClientTrade:
 def test_v0_5_public_surface_imports() -> None:
     """Confirm the v0.5 additions are reachable from the top-level package."""
     from xtb_api import InstrumentRegistry, XTBAuth, XTBClient
+
     assert XTBClient is not None
     assert XTBAuth is not None
     assert InstrumentRegistry is not None

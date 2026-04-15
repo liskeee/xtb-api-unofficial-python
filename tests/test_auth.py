@@ -516,4 +516,5 @@ def test_xtb_auth_is_alias_for_auth_manager() -> None:
     """XTBAuth should be a public alias for AuthManager."""
     from xtb_api import XTBAuth
     from xtb_api.auth.auth_manager import AuthManager
+
     assert XTBAuth is AuthManager

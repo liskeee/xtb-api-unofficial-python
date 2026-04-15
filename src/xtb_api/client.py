@@ -411,7 +411,6 @@ class XTBClient:
             error=None,
         )
 
-
     async def _poll_fill_price(self, symbol: str, attempts: int = 3, delay_sec: float = 1.0) -> float | None:
         """Poll positions after a successful trade to determine the actual fill price.
 
