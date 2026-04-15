@@ -50,6 +50,7 @@ async def test_buy_rejects_negative_volume(client: XTBClient) -> None:
     result = await client.buy("CIG.PL", volume=-1)
     assert result.success is False
     assert "insufficient_volume" in (result.error or "")
+    client._fake_grpc.execute_order.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -66,5 +67,30 @@ async def test_buy_accepts_volume_one(client: XTBClient, monkeypatch: pytest.Mon
     client._ws.get_positions = AsyncMock(return_value=[])
 
     result = await client.buy("CIG.PL", volume=1)
+    assert result.success is True
+    client._fake_grpc.execute_order.assert_awaited()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_buy_rejects_fractional_below_half(client: XTBClient) -> None:
+    """volume=0.49 rounds down to 0 and must be rejected."""
+    result = await client.buy("CIG.PL", volume=0.49)  # type: ignore[arg-type]
+    assert result.success is False
+    assert "insufficient_volume" in (result.error or "")
+    client._fake_grpc.execute_order.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_buy_accepts_fractional_at_half(
+    client: XTBClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """volume=0.5 rounds up to 1 and must pass validation."""
+    monkeypatch.setattr(client, "_resolve_instrument_id", AsyncMock(return_value=123))
+    client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
+        return_value=MagicMock(success=True, order_id="O1", error=None)
+    )
+    client._ws.get_positions = AsyncMock(return_value=[])
+
+    result = await client.buy("CIG.PL", volume=0.5)  # type: ignore[arg-type]
     assert result.success is True
     client._fake_grpc.execute_order.assert_awaited()  # type: ignore[attr-defined]

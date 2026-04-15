@@ -330,7 +330,7 @@ class XTBClient:
         # Volume validation: reject anything that rounds to less than 1 share.
         # The gRPC endpoint accepts integer volumes only; forwarding 0 would
         # either silently no-op or explode with a cryptic error.
-        rounded = int(volume + 0.5) if volume >= 0 else -1
+        rounded = int(volume + 0.5)
         if rounded < 1:
             side_str = "buy" if side == SIDE_BUY else "sell"
             return TradeResult(
