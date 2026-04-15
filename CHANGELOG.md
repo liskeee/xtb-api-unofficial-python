@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v0.5.2 (2026-04-15)
+
+### Bug Fixes
+
+- **ci**: Inline publish jobs in Semantic Release instead of reusable call
+  ([`46c4ca1`](https://github.com/liskeee/xtb-api-unofficial-python/commit/46c4ca1c0cc82d2c96559d265e17c604cf5d7e82))
+
+PyPI's Trusted Publishing does not support reusable workflows — the gh-action-pypi-publish action
+  warns "Reusable workflows are not currently supported by PyPI's Trusted Publishing" and rejects
+  uploads from workflow_call contexts because the OIDC token Build Config URI points at the caller
+  rather than the publishing workflow file.
+
+Inline the build, publish-pypi, publish-testpypi, and attach-assets jobs directly into
+  semantic-release.yml so the top-level workflow filename matches the PyPI Trusted Publisher.
+  release.yml is retained for manual recovery (release:published event and workflow_dispatch).
+
+Requires PyPI to trust semantic-release.yml as well as release.yml.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+### Continuous Integration
+
+- Add workflow_dispatch trigger to Release for manual re-publishing
+  ([`e03863d`](https://github.com/liskeee/xtb-api-unofficial-python/commit/e03863d8d5428c0af75273e8618ee1c7958be8df))
+
+Allows manually re-triggering a build+publish for any existing tag from the Actions UI. Needed to
+  recover v0.5.0 and v0.5.1, which were tagged but failed to publish to PyPI.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+
 ## v0.5.1 (2026-04-15)
 
 ### Bug Fixes
