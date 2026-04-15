@@ -107,7 +107,10 @@ async def test_populate_merges_with_existing(tmp_path: Path) -> None:
     client = MagicMock()
     client.search_instrument = AsyncMock(return_value=[_isr("NEW.PL", 2)])
 
-    await reg.populate(client, ["NEW.PL"])
+    result = await reg.populate(client, ["NEW.PL"])
 
+    # Return value covers only matches from THIS call, not pre-existing entries.
+    assert result == {"NEW.PL": 2}
+    # But the persisted file preserves the prior entries.
     saved = json.loads(path.read_text())
     assert saved == {"OLD.PL": 99, "NEW.PL": 2}
