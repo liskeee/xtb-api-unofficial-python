@@ -327,6 +327,21 @@ class XTBClient:
         options: TradeOptions | None,
     ) -> TradeResult:
         """Execute a trade via gRPC, resolving the symbol first."""
+        # Volume validation: reject anything that rounds to less than 1 share.
+        # The gRPC endpoint accepts integer volumes only; forwarding 0 would
+        # either silently no-op or explode with a cryptic error.
+        rounded = int(volume + 0.5) if volume >= 0 else -1
+        if rounded < 1:
+            side_str = "buy" if side == SIDE_BUY else "sell"
+            return TradeResult(
+                success=False,
+                symbol=symbol,
+                side=cast("Literal['buy', 'sell']", side_str),
+                volume=float(volume),
+                order_id=None,
+                error=f"insufficient_volume: {volume} rounds to {rounded} (need >= 1)",
+            )
+
         grpc = self._ensure_grpc()
 
         instrument_id = await self._resolve_instrument_id(symbol)
