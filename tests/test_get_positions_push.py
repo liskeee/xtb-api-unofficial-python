@@ -55,6 +55,7 @@ def _make_client() -> XTBWebSocketClient:
 
 # ── parse_position_trade (extracted helper) ────────────────────────
 
+
 def test_parse_position_trade_extracts_expected_fields() -> None:
     pos = parse_position_trade(_trade("P1"))
     assert pos.symbol == "CIG.PL"
@@ -81,6 +82,7 @@ def test_parse_position_trade_zero_sl_tp_become_none() -> None:
 
 
 # ── get_positions push-collection ──────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_get_positions_collects_first_burst(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,5 +150,6 @@ async def test_get_positions_raises_when_not_connected() -> None:
     client = XTBWebSocketClient(config)
     # Default state: not connected.
     from xtb_api.exceptions import XTBConnectionError
+
     with pytest.raises(XTBConnectionError):
         await client.get_positions(max_wait_ms=100)
