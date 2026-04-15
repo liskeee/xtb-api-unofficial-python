@@ -16,7 +16,9 @@ Python client for the XTB xStation5 trading platform. Dead-simple API that handl
 - **2FA Support** — Automatic TOTP handling when `totp_secret` is provided
 - **Real-time Data** — Live quotes, positions, balance via WebSocket push events
 - **Trading** — Buy/sell market orders with SL/TP via gRPC-web
-- **11,888+ Instruments** — Full symbol search with caching
+- **Volume-Validated Orders** — `buy`/`sell` reject `volume < 1` before touching the wire
+- **Persistent Instrument Cache** — `InstrumentRegistry` caches symbol → instrument-ID lookups to disk
+- **Full Symbol Search** — Search and resolve all listed instruments with caching
 - **Modern Python** — async/await, Pydantic models, strict typing, Python 3.12+
 
 ## Requirements
@@ -93,6 +95,12 @@ async def main():
     # Search instruments
     results = await client.search_instrument("Apple")
 
+    # Persistent instrument cache (avoids re-fetching the full symbol list)
+    from xtb_api import InstrumentRegistry
+    registry = InstrumentRegistry("~/.xtb_instruments.json")
+    matched = await registry.populate(client, ["AAPL.US", "EURUSD"])
+    instrument_id = registry.get("AAPL.US")  # int | None
+
     # Trading (USE WITH CAUTION!)
     result = await client.buy("AAPL.US", volume=1, stop_loss=150.0, take_profit=200.0)
     print(f"Order: {result.order_id}")
@@ -126,6 +134,8 @@ await client.sell("CIG.PL", volume=100, options=TradeOptions(
 ))
 ```
 
+> `TradeResult.price` is populated by polling open positions immediately after fill. If the position cannot be located within the poll window, `price` remains `None`.
+
 ## API Reference
 
 ### `XTBClient`
@@ -158,6 +168,18 @@ await client.sell("CIG.PL", volume=100, options=TradeOptions(
 | `account_server` | No | `"XS-real1"` | gRPC account server |
 | `auto_reconnect` | No | `True` | Auto-reconnect on disconnect |
 
+### `InstrumentRegistry`
+
+Persistent symbol → instrument-ID cache, stored as JSON.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `InstrumentRegistry(path)` | — | Load (or create) the JSON cache at `path` |
+| `get(symbol)` | `int \| None` | Cached instrument ID for `symbol`, or `None` |
+| `set(symbol, id)` | `None` | Cache one mapping and persist immediately |
+| `populate(client, symbols)` | `dict[str, int]` | Download the full symbol list via `client`, match requested `symbols` (case-insensitive, dot-less fallback), persist, return new matches |
+| `ids` | `dict[str, int]` | Read-only copy of the full cache |
+
 ### WebSocket URLs
 
 | Environment | URL |
@@ -176,8 +198,9 @@ ws = client.ws
 # gRPC client (available after first trade)
 grpc = client.grpc_client
 
-# Auth manager
+# Auth manager (accessor, or import the public alias)
 auth = client.auth
+from xtb_api import XTBAuth  # public alias for the AuthManager class
 tgt = await auth.get_tgt()
 ```
 

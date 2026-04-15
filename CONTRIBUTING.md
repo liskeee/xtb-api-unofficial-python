@@ -99,16 +99,13 @@ When an rc is ready for promotion, fast-forward merge `next` back into
 
 ### Previewing a release locally
 
-Before enabling this on `master` the first time — or to sanity-check what
-PSR will do — run PSR in no-op mode locally:
+To sanity-check what semantic-release will do without touching the working tree:
 
 ```bash
 pip install "python-semantic-release>=9"
 semantic-release --noop version       # prints the next version
 semantic-release --noop changelog     # prints the regenerated CHANGELOG
 ```
-
-Neither command touches the working tree.
 
 ### One-time Trusted Publisher setup
 
@@ -117,15 +114,27 @@ repo as a Trusted Publisher on both PyPI and TestPyPI:
 
 1. Create GitHub Environments named `pypi` and `testpypi` on the repo
    (Settings → Environments).
-2. On PyPI, visit https://pypi.org/manage/account/publishing/ and add a
-   **pending publisher**:
+2. On PyPI, visit https://pypi.org/manage/account/publishing/ and add **two
+   pending publishers** for the same project (PyPI Trusted Publishing matches
+   the OIDC token's source workflow filename exactly, so both publishing
+   entry points must be registered):
+
+   Publisher A — automated path:
+   - PyPI project name: `xtb-api-python`
+   - Owner: `liskeee`
+   - Repository name: `xtb-api-python`
+   - Workflow name: `semantic-release.yml`
+   - Environment name: `pypi`
+
+   Publisher B — manual recovery via `workflow_dispatch`:
    - PyPI project name: `xtb-api-python`
    - Owner: `liskeee`
    - Repository name: `xtb-api-python`
    - Workflow name: `release.yml`
    - Environment name: `pypi`
+
 3. Do the same on TestPyPI at https://test.pypi.org/manage/account/publishing/
-   but with environment name `testpypi`.
+   for both workflows, but with environment name `testpypi`.
 
 After the first successful publish, the "pending" publisher becomes a normal
 trusted publisher tied to the project.
