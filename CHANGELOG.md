@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v0.5.4 (2026-04-15)
+
+### Bug Fixes
+
+- **ws**: Revert get_positions to reqId-based send
+  ([#9](https://github.com/liskeee/xtb-api-unofficial-python/pull/9),
+  [`d197b08`](https://github.com/liskeee/xtb-api-unofficial-python/commit/d197b08350e57a46b82adee5dcb206b2d068b852))
+
+v0.5.3's push-channel collection was based on a wrong diagnosis. Live API probing confirms the
+  xStation5 CoreAPI echoes getPositions on the NORMAL reqId response channel (status=0,
+  response=[...]), not as push events. The original implementation was correct.
+
+The 30s timeouts observed on the original 0.5.2 bot were something else — probably container-level
+  networking / first-call timing — not a protocol mismatch. The wrong fix in 0.5.3 made the problem
+  worse because get_positions() started returning [] instantly, causing the downstream bot to
+  auto-close positions it mistakenly thought were gone from the broker.
+
+Reverts the get_positions implementation to: res = await self.send("getPositions",
+  {"getAndSubscribeElement": {"eid": POSITIONS}}, timeout_ms=30000) return
+  parse_positions(self._extract_elements(res))
+
+Keeps `parse_position_trade` helper in parsers.py — harmless refactor. Removes
+  tests/test_get_positions_push.py — tested wrong behavior.
+
+Verified against real XTB account: all 5 open positions returned in ~1-2s via normal reqId response.
+
+Co-authored-by: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+
 ## v0.5.3 (2026-04-15)
 
 ### Bug Fixes
