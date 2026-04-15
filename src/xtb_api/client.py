@@ -330,7 +330,10 @@ class XTBClient:
         """Execute a trade via gRPC, resolving the symbol first."""
         # Volume validation: reject anything that rounds to less than 1 share.
         # The gRPC endpoint accepts integer volumes only; forwarding 0 would
-        # either silently no-op or explode with a cryptic error.
+        # either silently no-op or explode with a cryptic error. Python's int()
+        # truncates toward zero, so negative inputs (e.g. -0.4 → 0, -2 → -1) are
+        # naturally rejected by the `< 1` check without a separate negativity
+        # guard — the half-up rounding is the single rule.
         rounded = int(volume + 0.5)
         if rounded < 1:
             side_str = "buy" if side == SIDE_BUY else "sell"
@@ -419,10 +422,13 @@ class XTBClient:
         for i in range(attempts):
             try:
                 positions = await self._ws.get_positions()
+                # Position.symbol carries the plain symbol name from the WS
+                # xcfdtrade.symbol field (e.g. "CIG.PL"), not the _9-suffixed
+                # symbol_key. Case-insensitive compare is enough.
                 for p in positions:
                     if p.symbol.upper() == target:
                         return p.open_price
-            except Exception as exc:  # pragma: no cover — defensive
+            except Exception as exc:
                 logger.warning("Fill-price poll attempt %d/%d failed: %s", i + 1, attempts, exc)
             if i < attempts - 1:
                 await asyncio.sleep(delay_sec)

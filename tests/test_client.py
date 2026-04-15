@@ -265,6 +265,7 @@ class TestXTBClientTrade:
         mock_instrument.instrument_id = 9438
         mock_instrument.symbol_key = "9_CIG.PL_6"
         client._ws.search_instrument = AsyncMock(return_value=[mock_instrument])
+        client._ws.get_positions = AsyncMock(return_value=[])
         return client
 
     @pytest.mark.asyncio
