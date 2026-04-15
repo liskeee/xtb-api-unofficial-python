@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "xtb-api-python"
-version = "0.5.2"
+version = "0.5.3"
 description = "Python port of unofficial XTB xStation5 API client"
 readme = "README.md"
 license = "MIT"

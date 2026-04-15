@@ -1,6 +1,75 @@
 # CHANGELOG
 
 
+## v0.5.3 (2026-04-15)
+
+### Bug Fixes
+
+- **ws**: Consume POSITIONS push channel in get_positions
+  ([`b0156bc`](https://github.com/liskeee/xtb-api-unofficial-python/commit/b0156bcc328630fb5e80952d87794780a8e30c73))
+
+XTB's xStation5 CoreAPI does not echo a reqId-correlated response for the `getPositions` RPC;
+  position data arrives exclusively via status=1 push events with eid=POSITIONS. The previous
+  implementation awaited a regular reqId-matched response and timed out after 30s on every call
+  against a live account.
+
+Fix: subscribe and consume the push burst. Register a one-shot 'position' handler, fire the
+  subscribe RPC (do not await its reply), and collect pushed events until either a quiet period (no
+  new position for 500 ms) or a max-wait ceiling (5 s) closes the window. Dedup by positionId so a
+  retriggered snapshot does not duplicate entries.
+
+parse_positions is refactored around a new parse_position_trade(trade) helper so the push handler
+  and the (still-supported) element-list path share the single source of truth for xcfdtrade →
+  Position mapping.
+
+Tests: 8 new tests cover parser extraction, burst collection, dedup, empty-on-timeout, listener
+  cleanup, and the not-connected guard.
+
+Fixes the downstream xtb-investor-pro bot's "get_positions failed" timeouts observed immediately
+  after the broker abstraction merge.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+- **ws**: Drop unused parse_positions import
+  ([`63b3263`](https://github.com/liskeee/xtb-api-unofficial-python/commit/63b3263b64ef76ad7759b26a70e8d6ec26e6c9b3))
+
+### Code Style
+
+- Ruff format test_get_positions_push.py
+  ([`6e376a8`](https://github.com/liskeee/xtb-api-unofficial-python/commit/6e376a8cc1578d388f8469da3b49b02dee021841))
+
+### Documentation
+
+- Add design spec for v0.5 docs refresh
+  ([`c55d839`](https://github.com/liskeee/xtb-api-unofficial-python/commit/c55d839534ff39f5da55ec920fe6457eb82fb458))
+
+Captures the README/CONTRIBUTING/SECURITY drift between v0.4.x docs and the v0.5.2 surface (XTBAuth,
+  InstrumentRegistry, fill-price polling, volume guard, inlined publish jobs, supported-versions
+  table).
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+- Add implementation plan for v0.5 docs refresh
+  ([`0a4e3dd`](https://github.com/liskeee/xtb-api-unofficial-python/commit/0a4e3ddab03ad6cc87b4789cf39c772d85ca6d75))
+
+Pairs with the design spec at docs/superpowers/specs/2026-04-15-docs-refresh-v0.5-design.md and
+  tracks the four tasks executed in 97bbada.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+- Refresh README, CONTRIBUTING, SECURITY to v0.5 state
+  ([`97bbada`](https://github.com/liskeee/xtb-api-unofficial-python/commit/97bbada41434dacbf3139af6e26b70ad8a632ba6))
+
+- README: document XTBAuth alias, InstrumentRegistry, post-fill TradeResult.price, and the
+  volume-validation guard added in v0.5.0; drop stale 11,888+ symbol count. - CONTRIBUTING: trim
+  "before enabling on master" framing now that PSR is live; list both semantic-release.yml and
+  release.yml as required Trusted Publishers (PyPI matches the OIDC token's workflow filename
+  exactly, and v0.5.2 inlined the publish jobs into semantic-release.yml). - SECURITY: bump
+  supported-versions table from 0.3.x to 0.5.x.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+
 ## v0.5.2 (2026-04-15)
 
 ### Bug Fixes
