@@ -13,3 +13,4 @@ dist/
 __pycache__/
 uv.lock
 .playwright-mcp/
+reference-ts/
