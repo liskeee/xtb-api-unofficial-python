@@ -510,3 +510,11 @@ class TestAuthManager:
             await auth._handle_two_factor(challenge)
 
         assert "2FA_NO_SECRET" in exc_info.value.code
+
+
+def test_xtb_auth_is_alias_for_auth_manager() -> None:
+    """XTBAuth should be a public alias for AuthManager."""
+    from xtb_api import XTBAuth
+    from xtb_api.auth.auth_manager import AuthManager
+
+    assert XTBAuth is AuthManager

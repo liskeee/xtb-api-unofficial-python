@@ -3,6 +3,7 @@
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
+from xtb_api.auth.auth_manager import AuthManager as XTBAuth
 from xtb_api.client import XTBClient
 from xtb_api.exceptions import (
     AuthenticationError,
@@ -16,6 +17,7 @@ from xtb_api.exceptions import (
     XTBError,
     XTBTimeoutError,
 )
+from xtb_api.instruments import InstrumentRegistry
 from xtb_api.types.enums import (
     SocketStatus,
     SubscriptionEid,
@@ -39,6 +41,8 @@ except PackageNotFoundError:  # pragma: no cover
 __all__ = [
     # Client
     "XTBClient",
+    "XTBAuth",
+    "InstrumentRegistry",
     # Exceptions
     "XTBError",
     "XTBConnectionError",

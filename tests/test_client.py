@@ -265,6 +265,7 @@ class TestXTBClientTrade:
         mock_instrument.instrument_id = 9438
         mock_instrument.symbol_key = "9_CIG.PL_6"
         client._ws.search_instrument = AsyncMock(return_value=[mock_instrument])
+        client._ws.get_positions = AsyncMock(return_value=[])
         return client
 
     @pytest.mark.asyncio
@@ -368,3 +369,12 @@ class TestXTBClientTrade:
 
         with pytest.raises(InstrumentNotFoundError):
             await client.buy("NONEXISTENT", volume=1)
+
+
+def test_v0_5_public_surface_imports() -> None:
+    """Confirm the v0.5 additions are reachable from the top-level package."""
+    from xtb_api import InstrumentRegistry, XTBAuth, XTBClient
+
+    assert XTBClient is not None
+    assert XTBAuth is not None
+    assert InstrumentRegistry is not None

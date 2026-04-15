@@ -9,6 +9,7 @@ Always test thoroughly on demo accounts before using with real money.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -327,6 +328,24 @@ class XTBClient:
         options: TradeOptions | None,
     ) -> TradeResult:
         """Execute a trade via gRPC, resolving the symbol first."""
+        # Volume validation: reject anything that rounds to less than 1 share.
+        # The gRPC endpoint accepts integer volumes only; forwarding 0 would
+        # either silently no-op or explode with a cryptic error. Python's int()
+        # truncates toward zero, so negative inputs (e.g. -0.4 → 0, -2 → -1) are
+        # naturally rejected by the `< 1` check without a separate negativity
+        # guard — the half-up rounding is the single rule.
+        rounded = int(volume + 0.5)
+        if rounded < 1:
+            side_str = "buy" if side == SIDE_BUY else "sell"
+            return TradeResult(
+                success=False,
+                symbol=symbol,
+                side=cast("Literal['buy', 'sell']", side_str),
+                volume=float(volume),
+                order_id=None,
+                error=f"insufficient_volume: {volume} rounds to {rounded} (need >= 1)",
+            )
+
         grpc = self._ensure_grpc()
 
         instrument_id = await self._resolve_instrument_id(symbol)
@@ -370,14 +389,50 @@ class XTBClient:
             )
 
         side_str = "buy" if side == SIDE_BUY else "sell"
+
+        if not result.success:
+            return TradeResult(
+                success=False,
+                symbol=symbol,
+                side=cast("Literal['buy', 'sell']", side_str),
+                volume=float(volume),
+                order_id=result.order_id,
+                error=result.error,
+            )
+
+        fill_price = await self._poll_fill_price(symbol)
         return TradeResult(
-            success=result.success,
+            success=True,
             symbol=symbol,
             side=cast("Literal['buy', 'sell']", side_str),
             volume=float(volume),
+            price=fill_price,
             order_id=result.order_id,
-            error=result.error,
+            error=None,
         )
+
+    async def _poll_fill_price(self, symbol: str, attempts: int = 3, delay_sec: float = 1.0) -> float | None:
+        """Poll positions after a successful trade to determine the actual fill price.
+
+        Returns None if the position does not appear within `attempts` tries.
+        The trade still succeeded — the order ID is the authoritative record.
+        """
+        target = symbol.upper()
+        for i in range(attempts):
+            try:
+                positions = await self._ws.get_positions()
+                # Position.symbol carries the plain symbol name from the WS
+                # xcfdtrade.symbol field (e.g. "CIG.PL"), not the _9-suffixed
+                # symbol_key. Case-insensitive compare is enough.
+                for p in positions:
+                    if p.symbol.upper() == target:
+                        return p.open_price
+            except Exception as exc:
+                logger.warning("Fill-price poll attempt %d/%d failed: %s", i + 1, attempts, exc)
+            if i < attempts - 1:
+                await asyncio.sleep(delay_sec)
+        logger.warning("Could not determine fill price for %s after %d attempts", symbol, attempts)
+        return None
 
 
 def _decimal_places(value: float, max_scale: int = 5) -> int:
