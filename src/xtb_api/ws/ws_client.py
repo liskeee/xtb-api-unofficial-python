@@ -53,7 +53,6 @@ from xtb_api.ws.parsers import (
     parse_instruments,
     parse_orders,
     parse_position_trade,
-    parse_positions,
     parse_quote,
 )
 
