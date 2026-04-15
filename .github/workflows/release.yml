@@ -3,6 +3,12 @@ name: Release
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to build and publish (e.g. v0.5.0)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,10 +18,23 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       is_stable: ${{ steps.classify.outputs.is_stable }}
+      tag: ${{ steps.resolve.outputs.tag }}
     steps:
+      - name: Resolve tag
+        id: resolve
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          TAG="${INPUT_TAG:-$EVENT_TAG}"
+          if [[ -z "$TAG" ]]; then
+            echo "No tag resolved" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ steps.resolve.outputs.tag }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -29,7 +48,7 @@ jobs:
       - name: Classify tag
         id: classify
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "is_stable=true" >> "$GITHUB_OUTPUT"
@@ -92,7 +111,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ needs.build.outputs.tag }}
         run: gh release upload "$TAG" dist/* --clobber
 
   attach-assets-prerelease:
@@ -110,5 +129,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ needs.build.outputs.tag }}
         run: gh release upload "$TAG" dist/* --clobber
