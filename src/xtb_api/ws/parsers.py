@@ -49,36 +49,41 @@ def parse_balance(
     )
 
 
+def parse_position_trade(trade: dict[str, Any]) -> Position:
+    """Convert a single `xcfdtrade` dict (as pushed on the POSITIONS
+    subscription) into a `Position`.
+
+    Callers that receive the wrapped `{value: {xcfdtrade: ...}}` shape
+    should use `parse_positions()` instead.
+    """
+    side_val = int(trade.get("side", 0))
+    return Position(
+        symbol=str(trade.get("symbol", "")),
+        instrument_id=int(trade["idQuote"]) if trade.get("idQuote") is not None else None,
+        volume=float(trade.get("volume", 0)),
+        current_price=0.0,
+        open_price=float(trade.get("openPrice", 0)),
+        stop_loss=float(trade["sl"]) if trade.get("sl") and trade["sl"] != 0 else None,
+        take_profit=float(trade["tp"]) if trade.get("tp") and trade["tp"] != 0 else None,
+        profit_percent=0.0,
+        profit_net=0.0,
+        swap=float(trade["swap"]) if trade.get("swap") is not None else None,
+        side="buy" if side_val == Xs6Side.BUY else "sell",
+        order_id=str(trade["positionId"]) if trade.get("positionId") is not None else None,
+        commission=float(trade["commission"]) if trade.get("commission") is not None else None,
+        margin=float(trade["margin"]) if trade.get("margin") is not None else None,
+        open_time=int(trade["openTime"]) if trade.get("openTime") is not None else None,
+    )
+
+
 def parse_positions(elements: list[dict[str, Any]]) -> list[Position]:
     """Parse open trading positions from subscription elements."""
     positions: list[Position] = []
-
     for el in elements:
         trade = (el or {}).get("value", {}).get("xcfdtrade")
         if not trade:
             continue
-
-        side_val = int(trade.get("side", 0))
-        positions.append(
-            Position(
-                symbol=str(trade.get("symbol", "")),
-                instrument_id=int(trade["idQuote"]) if trade.get("idQuote") is not None else None,
-                volume=float(trade.get("volume", 0)),
-                current_price=0.0,
-                open_price=float(trade.get("openPrice", 0)),
-                stop_loss=float(trade["sl"]) if trade.get("sl") and trade["sl"] != 0 else None,
-                take_profit=float(trade["tp"]) if trade.get("tp") and trade["tp"] != 0 else None,
-                profit_percent=0.0,
-                profit_net=0.0,
-                swap=float(trade["swap"]) if trade.get("swap") is not None else None,
-                side="buy" if side_val == Xs6Side.BUY else "sell",
-                order_id=str(trade["positionId"]) if trade.get("positionId") is not None else None,
-                commission=float(trade["commission"]) if trade.get("commission") is not None else None,
-                margin=float(trade["margin"]) if trade.get("margin") is not None else None,
-                open_time=int(trade["openTime"]) if trade.get("openTime") is not None else None,
-            )
-        )
-
+        positions.append(parse_position_trade(trade))
     return positions
 
 

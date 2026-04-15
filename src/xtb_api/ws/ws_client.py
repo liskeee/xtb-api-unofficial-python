@@ -52,6 +52,7 @@ from xtb_api.ws.parsers import (
     parse_balance,
     parse_instruments,
     parse_orders,
+    parse_position_trade,
     parse_positions,
     parse_quote,
 )
@@ -533,15 +534,81 @@ class XTBWebSocketClient:
 
         return parse_balance(self._extract_elements(res), account.currency, account.accountNo)
 
-    async def get_positions(self) -> list[Position]:
-        """Get all open trading positions."""
-        res = await self.send(
-            "getPositions",
-            {"getAndSubscribeElement": {"eid": SubscriptionEid.POSITIONS}},
-            timeout_ms=30000,
-        )
+    async def get_positions(
+        self,
+        *,
+        max_wait_ms: int = 5000,
+        quiet_ms: int = 500,
+    ) -> list[Position]:
+        """Get all open trading positions.
 
-        return parse_positions(self._extract_elements(res))
+        XTB's xStation5 CoreAPI returns position data via the push/events
+        channel (`status=1` with `eid=POSITIONS`), NOT via the normal
+        `reqId`-echoed response channel. So we subscribe, then collect the
+        burst of push events that follow, rather than awaiting a direct reply.
+
+        The collection window closes when either:
+        * `max_wait_ms` has elapsed since the subscription fired, OR
+        * `quiet_ms` has passed with no new position push (whichever first).
+
+        Deduplicates by `positionId` so a retriggered snapshot + update sequence
+        won't produce duplicates.
+        """
+        if not self.is_connected or not self._ws:
+            raise XTBConnectionError("Not connected")
+
+        collected: dict[str, Position] = {}
+        loop = asyncio.get_running_loop()
+        last_push_ts = loop.time()
+
+        def on_position(trade: dict[str, Any]) -> None:
+            nonlocal last_push_ts
+            try:
+                pos = parse_position_trade(trade)
+            except Exception as exc:  # pragma: no cover — defensive
+                logger.warning("Failed to parse position push: %s", exc)
+                return
+            # Dedup by positionId; fall back to object id if missing.
+            key = pos.order_id or str(id(trade))
+            collected[key] = pos
+            last_push_ts = loop.time()
+
+        self.on("position", on_position)
+        try:
+            # Fire the subscribe; do NOT await a reqId response (XTB doesn't
+            # echo one for POSITIONS). The handler above captures the pushes.
+            req_id = self._next_req_id("getPositions")
+            request = {
+                "reqId": req_id,
+                "command": [
+                    {
+                        "CoreAPI": {
+                            "endpoint": self._config.endpoint,
+                            "accountId": self.account_id,
+                            "getAndSubscribeElement": {"eid": SubscriptionEid.POSITIONS},
+                        }
+                    }
+                ],
+            }
+            await self._ws.send(json.dumps(request))
+
+            start = loop.time()
+            max_wait_s = max_wait_ms / 1000.0
+            quiet_s = quiet_ms / 1000.0
+            while True:
+                await asyncio.sleep(0.05)
+                elapsed = loop.time() - start
+                if elapsed >= max_wait_s:
+                    break
+                # Quiet-period exit only after we have at least one position —
+                # otherwise a slow server that hasn't sent anything yet would
+                # trigger the quiet-exit prematurely.
+                if collected and (loop.time() - last_push_ts) >= quiet_s:
+                    break
+        finally:
+            self.off("position", on_position)
+
+        return list(collected.values())
 
     async def get_orders(self) -> list[PendingOrder]:
         """Get all pending (limit/stop) orders."""
