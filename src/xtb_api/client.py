@@ -9,6 +9,7 @@ Always test thoroughly on demo accounts before using with real money.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -385,14 +386,48 @@ class XTBClient:
             )
 
         side_str = "buy" if side == SIDE_BUY else "sell"
+
+        if not result.success:
+            return TradeResult(
+                success=False,
+                symbol=symbol,
+                side=cast("Literal['buy', 'sell']", side_str),
+                volume=float(volume),
+                order_id=result.order_id,
+                error=result.error,
+            )
+
+        fill_price = await self._poll_fill_price(symbol)
         return TradeResult(
-            success=result.success,
+            success=True,
             symbol=symbol,
             side=cast("Literal['buy', 'sell']", side_str),
             volume=float(volume),
+            price=fill_price,
             order_id=result.order_id,
-            error=result.error,
+            error=None,
         )
+
+
+    async def _poll_fill_price(self, symbol: str, attempts: int = 3, delay_sec: float = 1.0) -> float | None:
+        """Poll positions after a successful trade to determine the actual fill price.
+
+        Returns None if the position does not appear within `attempts` tries.
+        The trade still succeeded — the order ID is the authoritative record.
+        """
+        target = symbol.upper()
+        for i in range(attempts):
+            try:
+                positions = await self._ws.get_positions()
+                for p in positions:
+                    if p.symbol.upper() == target:
+                        return p.open_price
+            except Exception as exc:  # pragma: no cover — defensive
+                logger.warning("Fill-price poll attempt %d/%d failed: %s", i + 1, attempts, exc)
+            if i < attempts - 1:
+                await asyncio.sleep(delay_sec)
+        logger.warning("Could not determine fill price for %s after %d attempts", symbol, attempts)
+        return None
 
 
 def _decimal_places(value: float, max_scale: int = 5) -> int:
