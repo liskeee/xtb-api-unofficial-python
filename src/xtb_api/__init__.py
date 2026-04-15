@@ -5,6 +5,7 @@ from importlib.metadata import version as _pkg_version
 
 from xtb_api.auth.auth_manager import AuthManager as XTBAuth
 from xtb_api.client import XTBClient
+from xtb_api.instruments import InstrumentRegistry
 from xtb_api.exceptions import (
     AuthenticationError,
     CASError,
@@ -41,6 +42,7 @@ __all__ = [
     # Client
     "XTBClient",
     "XTBAuth",
+    "InstrumentRegistry",
     # Exceptions
     "XTBError",
     "XTBConnectionError",
