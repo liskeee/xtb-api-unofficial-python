@@ -36,6 +36,7 @@ from xtb_api.types.trading import (
     PendingOrder,
     Position,
     TradeOptions,
+    TradeOutcome,
     TradeResult,
 )
 from xtb_api.types.websocket import (
@@ -672,10 +673,11 @@ class XTBWebSocketClient:
         side_str = "buy" if side == Xs6Side.BUY else "sell"
         if not instrument:
             return TradeResult(
-                success=False,
+                status=TradeOutcome.REJECTED,
                 symbol=symbol,
                 side=cast("Literal['buy', 'sell']", side_str),
                 error=f"Instrument not found: {symbol}",
+                error_code="INSTRUMENT_NOT_FOUND",
             )
 
         size: dict[str, Any]
@@ -721,7 +723,7 @@ class XTBWebSocketClient:
 
         if res.error:
             return TradeResult(
-                success=False,
+                status=TradeOutcome.REJECTED,
                 symbol=symbol,
                 side=cast("Literal['buy', 'sell']", side_str),
                 error=res.error.get("message", "Unknown error"),
@@ -729,7 +731,7 @@ class XTBWebSocketClient:
 
         data = self._extract_response_data(res)
         return TradeResult(
-            success=True,
+            status=TradeOutcome.FILLED,
             order_id=str(data.get("orderId")) if data and data.get("orderId") is not None else None,
             symbol=symbol,
             side=cast("Literal['buy', 'sell']", side_str),
