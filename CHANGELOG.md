@@ -35,7 +35,16 @@
   `"FILL_PRICE_UNKNOWN"`. (F15, F40)
 - `scripts/validate_live.py` — re-runnable validator for the typed-outcome
   surface against a real XTB account. Read-only by default; live trades
-  gated behind `--live` AND `XTB_VALIDATE_LIVE=1`.
+  gated behind `--live` AND `XTB_VALIDATE_LIVE=1`. Prints a session-reuse
+  banner on every run so consumers can confirm the cached TGT is being
+  reused (i.e. XTB will *not* email a login notification) rather than
+  discovering the regression by inbox alone.
+- New `SessionSource` enum (`UNCACHED`, `MEMORY`, `SESSION_FILE`,
+  `CAS_LOGIN`, `BROWSER_LOGIN`) exposed at the package root.
+  `XTBClient.session_source` and `XTBClient.session_expires_at` let
+  callers verify, after `connect()`, whether the run reused the cached
+  session or performed a fresh login. `AuthManager` logs the same signal
+  at INFO level.
 
 ### Fixes
 

@@ -15,7 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from xtb_api.auth.auth_manager import AuthManager
+from xtb_api.auth.auth_manager import AuthManager, SessionSource
 from xtb_api.auth.cas_client import CASClientConfig
 from xtb_api.exceptions import AmbiguousOutcomeError, InstrumentNotFoundError
 from xtb_api.grpc.client import GrpcClient
@@ -117,6 +117,22 @@ class XTBClient:
         await self._ws._establish_connection()
         await self._ws.register_client_info()
         await self._ws.login_with_service_ticket(service_ticket)
+
+    @property
+    def session_source(self) -> SessionSource:
+        """Where the currently-held TGT came from (see :class:`SessionSource`).
+
+        Inspect after :meth:`connect` to verify whether session reuse actually
+        happened. ``SESSION_FILE`` / ``MEMORY`` mean no fresh login occurred
+        (no XTB "new login" email); ``CAS_LOGIN`` / ``BROWSER_LOGIN`` indicate
+        that the cached TGT was missing or expired and a fresh login ran.
+        """
+        return self._auth.session_source
+
+    @property
+    def session_expires_at(self) -> float | None:
+        """Unix timestamp at which the current TGT expires (``None`` if unset)."""
+        return self._auth.session_expires_at
 
     async def disconnect(self) -> None:
         """Disconnect from XTB and clean up all resources."""

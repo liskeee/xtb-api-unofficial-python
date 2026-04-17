@@ -43,9 +43,10 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
-from xtb_api import XTBClient
+from xtb_api import SessionSource, XTBClient
 from xtb_api.exceptions import XTBError
 from xtb_api.types.trading import TradeOutcome, TradeResult
 
@@ -84,6 +85,37 @@ def require_any(*keys: str) -> str:
         if val:
             return val
     sys.exit(f"Missing required env var (need one of: {', '.join(keys)})")
+
+
+def describe_session(client: XTBClient, session_file: Path) -> str:
+    """Render a one-line banner describing whether the session was reused.
+
+    The user's test is: running the validator twice within 8h must produce a
+    ``session_file`` banner — if it's ``cas_login`` or ``browser_login``
+    twice in a row, the remember-device path regressed and XTB will email
+    on every run.
+    """
+    src = client.session_source
+    if src is SessionSource.UNCACHED:
+        return "session: UNCACHED (no TGT obtained yet)"
+
+    expires_at = client.session_expires_at
+    remaining_hm = ""
+    if expires_at is not None:
+        remaining = int(expires_at - time.time())
+        if remaining > 0:
+            remaining_hm = f" (TGT expires in {remaining // 3600}h {(remaining % 3600) // 60}m)"
+
+    match src:
+        case SessionSource.SESSION_FILE:
+            return f"session: REUSED from {session_file}{remaining_hm} — no XTB login email"
+        case SessionSource.MEMORY:
+            return f"session: REUSED from in-memory cache{remaining_hm}"
+        case SessionSource.CAS_LOGIN:
+            return f"session: FRESH CAS login{remaining_hm} — XTB will email a login notification"
+        case SessionSource.BROWSER_LOGIN:
+            return f"session: FRESH browser login{remaining_hm} — XTB will email a login notification"
+    return f"session: {src.value}{remaining_hm}"
 
 
 def describe(result: TradeResult) -> str:
@@ -206,18 +238,29 @@ async def main() -> int:
     account_number = int(require_any("XTB_ACCOUNT_NUMBER", "XTB_USER_ID"))
     totp_secret = os.environ.get("XTB_TOTP_SECRET", "")
 
+    session_file = repo_root / ".xtb_session"
+    cookies_file = repo_root / ".xtb_session_cookies.json"
+
+    print("── Session state (pre-connect) ────────────────────────")
+    print(f"  session file : {session_file} ({'exists' if session_file.exists() else 'missing'})")
+    print(f"  cookies file : {cookies_file} ({'exists' if cookies_file.exists() else 'missing'})")
+    if not session_file.exists():
+        print("  NOTE: no cached TGT — this run will perform a fresh CAS login")
+        print("        (XTB will send a login notification email).")
+    print()
+
     client = XTBClient(
         email=email,
         password=password,
         account_number=account_number,
         totp_secret=totp_secret,
-        session_file=repo_root / ".xtb_session",
+        session_file=session_file,
     )
 
     exit_code = 0
     try:
         await client.connect()
-        print("  connected.")
+        print(f"  connected. {describe_session(client, session_file)}")
 
         await run_readonly(client)
 

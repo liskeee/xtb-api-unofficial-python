@@ -4,6 +4,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
 from xtb_api.auth.auth_manager import AuthManager as XTBAuth
+from xtb_api.auth.auth_manager import SessionSource
 from xtb_api.client import XTBClient
 from xtb_api.exceptions import (
     AccountBlockedError,
@@ -48,6 +49,7 @@ __all__ = [
     # Client
     "XTBClient",
     "XTBAuth",
+    "SessionSource",
     "InstrumentRegistry",
     # Exceptions
     "XTBError",
