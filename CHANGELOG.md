@@ -1,6 +1,57 @@
 # CHANGELOG
 
 
+## [Unreleased] — v1.0 (workstream W1)
+
+### Breaking Changes
+
+- `TradeResult.success` is now a `@property` derived from
+  `status is TradeOutcome.FILLED`. Constructors no longer accept
+  `success=bool`; pass `status=TradeOutcome.*` instead. (F16)
+- Empty gRPC trade responses raise `AmbiguousOutcomeError` (a
+  `TradeError` subclass) instead of `ProtocolError` with a
+  string-matchable message. Consumers that pattern-matched on
+  `"gRPC call returned empty response"` must switch to
+  `except AmbiguousOutcomeError`. (F01, F14)
+- gRPC rejected-order messages are no longer clipped to 200 characters.
+  (F22)
+- `CASError` now has typed subclasses: `InvalidCredentialsError`,
+  `AccountBlockedError`, `RateLimitedError`, `TwoFactorRequiredError`.
+  Code reading `CASError.code` strings can migrate to
+  `except InvalidCredentialsError:` etc. `CASError` remains a parent
+  for forward compatibility. (F18)
+- Trading an unknown symbol now returns
+  `TradeResult(status=REJECTED, error_code="INSTRUMENT_NOT_FOUND")`
+  instead of raising `InstrumentNotFoundError`. This matches the
+  WebSocket-path behavior and the rest of W1's typed-outcome contract.
+
+### Additive
+
+- New `TradeOutcome` enum with values `FILLED`, `REJECTED`, `AMBIGUOUS`,
+  `INSUFFICIENT_VOLUME`, `AUTH_EXPIRED`, `RATE_LIMITED`, `TIMEOUT`.
+  Exported from the top-level `xtb_api` package. (F16)
+- `TradeResult.error_code: str | None` for stable short codes such as
+  `"INSUFFICIENT_VOLUME"`, `"RBAC_DENIED"`, `"AMBIGUOUS_NO_RESPONSE"`,
+  `"FILL_PRICE_UNKNOWN"`. (F15, F40)
+- `scripts/validate_live.py` — re-runnable validator for the typed-outcome
+  surface against a real XTB account. Read-only by default; live trades
+  gated behind `--live` AND `XTB_VALIDATE_LIVE=1`.
+
+### Fixes
+
+- JSON decode failures inside the WebSocket listener now emit
+  `ProtocolError` instead of a bare `RuntimeError`. (F21)
+- `GrpcClient.execute_order` now narrows its exception handling to
+  `httpx.HTTPError`; unexpected exceptions (logic bugs) propagate with
+  full tracebacks instead of being silently stuffed into
+  `GrpcTradeResult.error`. (F19)
+- JWT-refresh retry on RBAC now first checks for a matching live
+  position and short-circuits to `TradeOutcome.FILLED` if the initial
+  send already landed, eliminating the duplicate-order risk. (F02)
+- RBAC detection uses `grpc-status: 7` instead of string-matching
+  `"RBAC"` in error text. (F13)
+
+
 ## v0.6.0 (2026-04-17)
 
 ### Chores
