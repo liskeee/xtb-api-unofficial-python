@@ -327,8 +327,9 @@ class GrpcClient:
         # Error cases
         status = grpc_status if grpc_status is not None else 0
         response_text = response_bytes.decode("latin-1", errors="replace")
-        if grpc_message and "RBAC" in grpc_message or "RBAC" in response_text:
-            error_msg = "gRPC RBAC: access denied — JWT may be expired"
+        if status == 7:
+            detail = grpc_message or response_text
+            error_msg = f"gRPC RBAC/auth denied: {detail}"
         elif grpc_message:
             error_msg = f"gRPC error: grpc-message: {grpc_message}"
         else:
