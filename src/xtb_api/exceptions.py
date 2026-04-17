@@ -32,6 +32,30 @@ class CASError(AuthenticationError):
         super().__init__(message)
 
 
+class InvalidCredentialsError(CASError):
+    """CAS rejected the email/password (HTTP 401 or CAS_GET_TGT_UNAUTHORIZED)."""
+
+
+class AccountBlockedError(CASError):
+    """Account temporarily blocked (too many failed OTP attempts, etc.)."""
+
+
+class RateLimitedError(CASError):
+    """CAS returned a throttling error (too many OTP attempts / login attempts).
+
+    Distinct from the transport-level ``RateLimitError`` — this one is an
+    authentication-flow throttle.
+    """
+
+
+class TwoFactorRequiredError(CASError):
+    """CAS login reached the 2FA challenge and no OTP was available.
+
+    Raised when a login requires 2FA but the ``totp_secret`` is empty and
+    no browser fallback is configured.
+    """
+
+
 class ReconnectionError(XTBConnectionError):
     """Exhausted all reconnection attempts."""
 
