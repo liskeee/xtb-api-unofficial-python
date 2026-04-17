@@ -32,9 +32,7 @@ class TestCASErrorSubclasses:
         assert issubclass(cls, XTBError)
 
     def test_code_attribute_is_preserved(self) -> None:
-        err = InvalidCredentialsError(
-            "CAS_GET_TGT_UNAUTHORIZED", "Invalid credentials"
-        )
+        err = InvalidCredentialsError("CAS_GET_TGT_UNAUTHORIZED", "Invalid credentials")
         assert err.code == "CAS_GET_TGT_UNAUTHORIZED"
         assert str(err) == "Invalid credentials"
 

@@ -398,8 +398,7 @@ class XTBClient:
             existing = await self._find_matching_position(symbol, volume, side_str)
             if existing is not None:
                 logger.info(
-                    "RBAC returned but matching position %s already exists — "
-                    "skipping retry (idempotent short-circuit)",
+                    "RBAC returned but matching position %s already exists — skipping retry (idempotent short-circuit)",
                     existing.order_id,
                 )
                 return TradeResult(
@@ -496,11 +495,7 @@ class XTBClient:
 
         target = symbol.upper()
         for p in positions:
-            if (
-                p.symbol.upper() == target
-                and p.side == side_str
-                and abs(p.volume - float(volume)) < 1e-9
-            ):
+            if p.symbol.upper() == target and p.side == side_str and abs(p.volume - float(volume)) < 1e-9:
                 return p
         return None
 
@@ -522,9 +517,7 @@ class XTBClient:
                     if p.symbol.upper() == target:
                         return p.open_price, None
             except Exception as exc:
-                logger.warning(
-                    "Fill-price poll attempt %d/%d failed: %s", i + 1, attempts, exc
-                )
+                logger.warning("Fill-price poll attempt %d/%d failed: %s", i + 1, attempts, exc)
             if i < attempts - 1:
                 await asyncio.sleep(delay_sec)
         logger.warning(

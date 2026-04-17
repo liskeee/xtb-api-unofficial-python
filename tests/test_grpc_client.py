@@ -369,9 +369,7 @@ class TestGrpcEmptyResponseSemantics:
         client._jwt_timestamp = time.monotonic()
 
         # Empty body: HTTP 200 with resp.text == ""
-        empty_resp = httpx.Response(
-            200, text="", request=httpx.Request("POST", "https://example.com")
-        )
+        empty_resp = httpx.Response(200, text="", request=httpx.Request("POST", "https://example.com"))
         mock_http = AsyncMock()
         mock_http.post = AsyncMock(return_value=empty_resp)
         mock_http.is_closed = False
@@ -388,9 +386,7 @@ class TestGrpcEmptyResponseSemantics:
 
         client = GrpcClient(account_number="12345678")
 
-        empty_resp = httpx.Response(
-            200, text="", request=httpx.Request("POST", "https://example.com")
-        )
+        empty_resp = httpx.Response(200, text="", request=httpx.Request("POST", "https://example.com"))
         mock_http = AsyncMock()
         mock_http.post = AsyncMock(return_value=empty_resp)
         mock_http.is_closed = False

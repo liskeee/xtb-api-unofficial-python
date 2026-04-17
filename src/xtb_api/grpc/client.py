@@ -144,9 +144,7 @@ class GrpcClient:
         response_bytes = await self._grpc_call(GRPC_AUTH_ENDPOINT, body_b64, jwt=None)
 
         if not response_bytes:
-            raise AuthenticationError(
-                "CreateAccessToken returned an empty response — TGT may be invalid"
-            )
+            raise AuthenticationError("CreateAccessToken returned an empty response — TGT may be invalid")
 
         jwt = extract_jwt(response_bytes)
         if not jwt:
@@ -264,9 +262,7 @@ class GrpcClient:
         if not response_bytes:
             # HTTP POST succeeded but the gRPC body is empty. The order may
             # or may not have been placed; the caller must reconcile.
-            raise AmbiguousOutcomeError(
-                "gRPC trade endpoint returned an empty response; outcome ambiguous"
-            )
+            raise AmbiguousOutcomeError("gRPC trade endpoint returned an empty response; outcome ambiguous")
 
         logger.debug(
             "gRPC response: %d bytes — %s",
