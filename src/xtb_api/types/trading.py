@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel
@@ -127,13 +128,64 @@ class AccountBalance(BaseModel):
     account_number: int
 
 
-class TradeResult(BaseModel):
-    """Trade execution result."""
+class TradeOutcome(StrEnum):
+    """Typed outcome of a trade request.
 
-    success: bool
-    order_id: str | None = None
+    Values:
+    - ``FILLED`` — broker confirmed the order, position is open.
+    - ``REJECTED`` — broker refused (bad symbol, market closed, etc.).
+    - ``AMBIGUOUS`` — network or protocol failure after the send; the trade
+      may or may not have been placed. Caller must reconcile via
+      ``get_positions()``.
+    - ``INSUFFICIENT_VOLUME`` — local pre-check: volume rounds to < 1.
+    - ``AUTH_EXPIRED`` — JWT/TGT rejected (RBAC). Should be retried by the
+      library; only surfaced if retry also fails.
+    - ``RATE_LIMITED`` — broker throttled the request.
+    - ``TIMEOUT`` — request exceeded its deadline.
+    """
+
+    FILLED = "FILLED"
+    REJECTED = "REJECTED"
+    AMBIGUOUS = "AMBIGUOUS"
+    INSUFFICIENT_VOLUME = "INSUFFICIENT_VOLUME"
+    AUTH_EXPIRED = "AUTH_EXPIRED"
+    RATE_LIMITED = "RATE_LIMITED"
+    TIMEOUT = "TIMEOUT"
+
+
+class TradeResult(BaseModel):
+    """Trade execution result.
+
+    ``status`` is the authoritative field. ``success`` is a convenience
+    property equivalent to ``status is TradeOutcome.FILLED`` and is kept
+    for one-line checks.
+
+    Fields:
+        status: TradeOutcome — the typed result category.
+        order_id: broker-assigned order id, if known.
+        symbol: the symbol traded.
+        side: "buy" or "sell".
+        volume: requested volume (post-rounding for the < 1 check).
+        price: fill price, if observable via a position poll.
+        error: free-text error message from the broker (if any).
+        error_code: stable short code for the outcome flavor. Examples:
+            "INSUFFICIENT_VOLUME", "RBAC_DENIED", "AMBIGUOUS_NO_RESPONSE",
+            "FILL_PRICE_UNKNOWN", "NETWORK_ERROR". May also carry the raw
+            broker code when one is surfaced.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    status: TradeOutcome
     symbol: str
     side: Literal["buy", "sell"]
     volume: float | None = None
     price: float | None = None
+    order_id: str | None = None
     error: str | None = None
+    error_code: str | None = None
+
+    @property
+    def success(self) -> bool:
+        """True iff ``status is TradeOutcome.FILLED``."""
+        return self.status is TradeOutcome.FILLED

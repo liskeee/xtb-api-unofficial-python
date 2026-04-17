@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from xtb_api.client import XTBClient
-from xtb_api.types.trading import Position
+from xtb_api.types.trading import Position, TradeOutcome
 
 
 def _make_client(monkeypatch: pytest.MonkeyPatch) -> XTBClient:
@@ -92,3 +92,60 @@ async def test_failed_trade_does_not_poll_positions(monkeypatch: pytest.MonkeyPa
 
     assert result.success is False
     client._ws.get_positions.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fill_price_unknown_sets_error_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the fill-price poll exhausts, error_code must explicitly say so."""
+    client = _make_client(monkeypatch)
+    client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
+        return_value=MagicMock(success=True, order_id="O1", error=None, grpc_status=0)
+    )
+    client._ws.get_positions = AsyncMock(return_value=[])  # never appears
+    monkeypatch.setattr("asyncio.sleep", AsyncMock())
+
+    result = await client.buy("CIG.PL", volume=1)
+
+    assert result.status is TradeOutcome.FILLED  # trade still succeeded
+    assert result.price is None
+    assert result.error_code == "FILL_PRICE_UNKNOWN"
+
+
+@pytest.mark.asyncio
+async def test_fill_price_known_no_error_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Happy path: error_code is None when fill price was observed."""
+    client = _make_client(monkeypatch)
+    client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
+        return_value=MagicMock(success=True, order_id="O1", error=None, grpc_status=0)
+    )
+    client._ws.get_positions = AsyncMock(return_value=[_pos("CIG.PL", 42.5)])
+
+    result = await client.buy("CIG.PL", volume=1)
+
+    assert result.status is TradeOutcome.FILLED
+    assert result.price == 42.5
+    assert result.error_code is None
+
+
+@pytest.mark.asyncio
+async def test_fill_price_poll_exception_does_not_mask_fill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exception in the poll must not turn a FILLED trade into an error."""
+    client = _make_client(monkeypatch)
+    client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
+        return_value=MagicMock(success=True, order_id="O1", error=None, grpc_status=0)
+    )
+    client._ws.get_positions = AsyncMock(side_effect=RuntimeError("network blip"))
+    monkeypatch.setattr("asyncio.sleep", AsyncMock())
+
+    result = await client.buy("CIG.PL", volume=1)
+
+    assert result.status is TradeOutcome.FILLED
+    assert result.order_id == "O1"
+    assert result.price is None
+    assert result.error_code == "FILL_PRICE_UNKNOWN"

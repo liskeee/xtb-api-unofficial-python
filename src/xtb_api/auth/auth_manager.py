@@ -7,6 +7,7 @@ so consumers don't need to implement the auth chain themselves.
 from __future__ import annotations
 
 import asyncio
+import enum
 import json
 import logging
 import os
@@ -28,6 +29,22 @@ logger = logging.getLogger(__name__)
 # TGT validity: 8 hours, but refresh 5 minutes early to avoid races
 TGT_LIFETIME_SECONDS = 8 * 3600
 TGT_REFRESH_MARGIN_SECONDS = 5 * 60
+
+
+class SessionSource(enum.StrEnum):
+    """Where the current TGT came from.
+
+    Exposed as :attr:`AuthManager.session_source` so downstream code and
+    operators can confirm session reuse actually happened — XTB emails the
+    account owner on every fresh CAS login, so the difference between a
+    cache hit and a fresh login is user-visible.
+    """
+
+    UNCACHED = "uncached"
+    MEMORY = "memory"
+    SESSION_FILE = "session_file"
+    CAS_LOGIN = "cas_login"
+    BROWSER_LOGIN = "browser_login"
 
 
 class AuthManager:
@@ -89,6 +106,17 @@ class AuthManager:
         self._cas = CASClient(cas_config)
         self._cached_tgt: str | None = None
         self._cached_expires_at: float = 0.0
+        self._session_source: SessionSource = SessionSource.UNCACHED
+
+    @property
+    def session_source(self) -> SessionSource:
+        """Where the currently-held TGT came from (see :class:`SessionSource`)."""
+        return self._session_source
+
+    @property
+    def session_expires_at(self) -> float | None:
+        """TGT expiry as a Unix timestamp, or ``None`` if no TGT has been obtained."""
+        return self._cached_expires_at or None
 
     async def get_tgt(self) -> str:
         """Get a valid TGT, using the full auth chain as needed.
@@ -103,6 +131,7 @@ class AuthManager:
         """
         # 1. Check in-memory cache
         if self._cached_tgt and self._is_tgt_fresh(self._cached_expires_at):
+            self._session_source = SessionSource.MEMORY
             return self._cached_tgt
 
         # 2. Check session file
@@ -112,9 +141,18 @@ class AuthManager:
                 tgt = str(cached["tgt"])
                 self._cached_tgt = tgt
                 self._cached_expires_at = float(cached["expires_at"])
+                self._session_source = SessionSource.SESSION_FILE
+                remaining = int(self._cached_expires_at - time.time())
+                logger.info(
+                    "Reusing cached TGT from %s (expires in %dh %dm — no fresh login, no email)",
+                    self._session_file,
+                    remaining // 3600,
+                    (remaining % 3600) // 60,
+                )
                 return tgt
 
-        # 3. REST CAS login
+        # 3. REST CAS login (or browser fallback — _login_with_fallback sets session_source)
+        logger.info("No valid cached TGT — performing fresh CAS login (XTB will email login notification)")
         result = await self._login_with_fallback()
 
         # 4. Handle 2FA if needed
@@ -173,17 +211,23 @@ class AuthManager:
     async def _login_with_fallback(self) -> CASLoginSuccess | CASLoginTwoFactorRequired:
         """Try REST CAS login, fall back to browser if WAF blocks."""
         try:
-            return await self._cas.login(self._email, self._password)
+            result = await self._cas.login(self._email, self._password)
+            self._session_source = SessionSource.CAS_LOGIN
+            return result
         except CASError as e:
             # Invalid credentials — don't retry with browser
             if "UNAUTHORIZED" in e.code:
                 raise
             logger.info("REST CAS login failed (%s), trying browser fallback", e.code)
-            return await self._cas.login_with_browser(self._email, self._password)
+            result = await self._cas.login_with_browser(self._email, self._password)
+            self._session_source = SessionSource.BROWSER_LOGIN
+            return result
         except Exception as e:
             # WAF often returns HTML instead of JSON → httpx decode error
             logger.info("REST CAS login failed (%s), trying browser fallback", e)
-            return await self._cas.login_with_browser(self._email, self._password)
+            result = await self._cas.login_with_browser(self._email, self._password)
+            self._session_source = SessionSource.BROWSER_LOGIN
+            return result
 
     async def _handle_two_factor(self, challenge: CASLoginTwoFactorRequired) -> CASLoginSuccess:
         """Handle 2FA challenge using TOTP auto-generation or browser OTP."""
@@ -248,6 +292,7 @@ class AuthManager:
         """Clear TGT from memory and session file."""
         self._cached_tgt = None
         self._cached_expires_at = 0.0
+        self._session_source = SessionSource.UNCACHED
 
         if self._session_file and self._session_file.exists():
             self._session_file.unlink(missing_ok=True)

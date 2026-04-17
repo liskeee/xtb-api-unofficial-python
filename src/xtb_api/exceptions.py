@@ -32,6 +32,30 @@ class CASError(AuthenticationError):
         super().__init__(message)
 
 
+class InvalidCredentialsError(CASError):
+    """CAS rejected the email/password (HTTP 401 or CAS_GET_TGT_UNAUTHORIZED)."""
+
+
+class AccountBlockedError(CASError):
+    """Account temporarily blocked (too many failed OTP attempts, etc.)."""
+
+
+class RateLimitedError(CASError):
+    """CAS returned a throttling error (too many OTP attempts / login attempts).
+
+    Distinct from the transport-level ``RateLimitError`` — this one is an
+    authentication-flow throttle.
+    """
+
+
+class TwoFactorRequiredError(CASError):
+    """CAS login reached the 2FA challenge and no OTP was available.
+
+    Raised when a login requires 2FA but the ``totp_secret`` is empty and
+    no browser fallback is configured.
+    """
+
+
 class ReconnectionError(XTBConnectionError):
     """Exhausted all reconnection attempts."""
 
@@ -42,6 +66,18 @@ class TradeError(XTBError):
 
 class InstrumentNotFoundError(TradeError):
     """Symbol could not be resolved to a known instrument."""
+
+
+class AmbiguousOutcomeError(TradeError):
+    """The send succeeded but the broker's response did not confirm the trade.
+
+    The order may or may not have been placed. Consumers must reconcile
+    via ``get_positions()`` to determine whether the trade is live.
+
+    Typical cause: an empty gRPC-web response body after a successful HTTP
+    POST. Previously surfaced as a ``ProtocolError`` whose message had to
+    be string-matched.
+    """
 
 
 class RateLimitError(XTBError):

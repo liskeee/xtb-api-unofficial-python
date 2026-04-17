@@ -1,13 +1,18 @@
 """Tests for the exception hierarchy."""
 
 from xtb_api.exceptions import (
+    AccountBlockedError,
+    AmbiguousOutcomeError,
     AuthenticationError,
     CASError,
     InstrumentNotFoundError,
+    InvalidCredentialsError,
     ProtocolError,
+    RateLimitedError,
     RateLimitError,
     ReconnectionError,
     TradeError,
+    TwoFactorRequiredError,
     XTBConnectionError,
     XTBError,
     XTBTimeoutError,
@@ -22,8 +27,13 @@ class TestExceptionHierarchy:
             XTBConnectionError,
             AuthenticationError,
             CASError,
+            InvalidCredentialsError,
+            AccountBlockedError,
+            RateLimitedError,
+            TwoFactorRequiredError,
             ReconnectionError,
             TradeError,
+            AmbiguousOutcomeError,
             InstrumentNotFoundError,
             RateLimitError,
             XTBTimeoutError,
@@ -37,6 +47,7 @@ class TestExceptionHierarchy:
         assert issubclass(ReconnectionError, XTBConnectionError)
 
     def test_trade_hierarchy(self) -> None:
+        assert issubclass(AmbiguousOutcomeError, TradeError)
         assert issubclass(InstrumentNotFoundError, TradeError)
         assert issubclass(TradeError, XTBError)
 
@@ -74,3 +85,33 @@ class TestExceptionHierarchy:
         from xtb_api import CASError as TopLevelCASError
 
         assert TopLevelCASError is CASError
+
+
+class TestPublicExports:
+    def test_trade_outcome_reexported_from_top_level(self) -> None:
+        from xtb_api import TradeOutcome
+
+        assert TradeOutcome.FILLED == "FILLED"
+
+    def test_ambiguous_outcome_error_reexported(self) -> None:
+        from xtb_api import AmbiguousOutcomeError
+        from xtb_api.exceptions import TradeError
+
+        assert issubclass(AmbiguousOutcomeError, TradeError)
+
+    def test_cas_subclasses_reexported(self) -> None:
+        from xtb_api import (
+            AccountBlockedError,
+            CASError,
+            InvalidCredentialsError,
+            RateLimitedError,
+            TwoFactorRequiredError,
+        )
+
+        for cls in (
+            InvalidCredentialsError,
+            AccountBlockedError,
+            RateLimitedError,
+            TwoFactorRequiredError,
+        ):
+            assert issubclass(cls, CASError)

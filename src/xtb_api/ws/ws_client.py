@@ -36,6 +36,7 @@ from xtb_api.types.trading import (
     PendingOrder,
     Position,
     TradeOptions,
+    TradeOutcome,
     TradeResult,
 )
 from xtb_api.types.websocket import (
@@ -57,6 +58,9 @@ from xtb_api.ws.parsers import (
 )
 
 logger = logging.getLogger(__name__)
+
+_BALANCE_SNAPSHOT_POLL_MS = 200
+_BALANCE_SNAPSHOT_MAX_WAIT_MS = 3000
 
 # Type alias for event callbacks
 EventCallback = Callable[..., Any]
@@ -512,7 +516,15 @@ class XTBWebSocketClient:
     # ─── High-level API ───
 
     async def get_balance(self) -> AccountBalance:
-        """Get account balance and equity information."""
+        """Get account balance and equity information.
+
+        XTB acks the TOTAL_BALANCE subscribe immediately with an empty
+        element list; the populated `xtotalbalance` snapshot arrives on
+        the subscription a moment later. To avoid silently returning
+        zeros, this method polls up to
+        :data:`_BALANCE_SNAPSHOT_MAX_WAIT_MS` for the first populated
+        snapshot, then falls back to whatever the last response held.
+        """
         if not self._authenticated or not self._login_result:
             raise AuthenticationError("Must be authenticated to get balance")
 
@@ -526,12 +538,28 @@ class XTBWebSocketClient:
         if not account:
             raise ProtocolError("Account not found in login result")
 
-        res = await self.send(
-            "getBalance",
-            {"getAndSubscribeElement": {"eid": SubscriptionEid.TOTAL_BALANCE}},
-        )
+        deadline = time.monotonic() + _BALANCE_SNAPSHOT_MAX_WAIT_MS / 1000
+        elements: list[dict[str, Any]] = []
+        first = True
+        while True:
+            res = await self.send(
+                "getBalance",
+                {"getAndSubscribeElement": {"eid": SubscriptionEid.TOTAL_BALANCE}},
+            )
+            elements = self._extract_elements(res)
+            if elements and (elements[0] or {}).get("value", {}).get("xtotalbalance"):
+                break
+            if time.monotonic() >= deadline:
+                if first:
+                    logger.warning(
+                        "TOTAL_BALANCE subscription never produced a snapshot within %dms; returning zeros",
+                        _BALANCE_SNAPSHOT_MAX_WAIT_MS,
+                    )
+                break
+            first = False
+            await asyncio.sleep(_BALANCE_SNAPSHOT_POLL_MS / 1000)
 
-        return parse_balance(self._extract_elements(res), account.currency, account.accountNo)
+        return parse_balance(elements, account.currency, account.accountNo)
 
     async def get_positions(self) -> list[Position]:
         """Get all open trading positions.
@@ -672,10 +700,11 @@ class XTBWebSocketClient:
         side_str = "buy" if side == Xs6Side.BUY else "sell"
         if not instrument:
             return TradeResult(
-                success=False,
+                status=TradeOutcome.REJECTED,
                 symbol=symbol,
                 side=cast("Literal['buy', 'sell']", side_str),
                 error=f"Instrument not found: {symbol}",
+                error_code="INSTRUMENT_NOT_FOUND",
             )
 
         size: dict[str, Any]
@@ -721,7 +750,7 @@ class XTBWebSocketClient:
 
         if res.error:
             return TradeResult(
-                success=False,
+                status=TradeOutcome.REJECTED,
                 symbol=symbol,
                 side=cast("Literal['buy', 'sell']", side_str),
                 error=res.error.get("message", "Unknown error"),
@@ -729,7 +758,7 @@ class XTBWebSocketClient:
 
         data = self._extract_response_data(res)
         return TradeResult(
-            success=True,
+            status=TradeOutcome.FILLED,
             order_id=str(data.get("orderId")) if data and data.get("orderId") is not None else None,
             symbol=symbol,
             side=cast("Literal['buy', 'sell']", side_str),
@@ -771,7 +800,7 @@ class XTBWebSocketClient:
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError as e:
-            self._emit("error", RuntimeError(f"Failed to parse message: {e}"))
+            self._emit("error", ProtocolError(f"Failed to parse message: {e}"))
             return
 
         req_id = msg.get("reqId", "")

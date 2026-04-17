@@ -480,3 +480,29 @@ class TestWSClientHelpers:
 
         with pytest.raises(AuthenticationError, match="Must be authenticated"):
             await client.get_balance()
+
+
+class TestWsJsonDecodeEmitsProtocolError:
+    """F21: JSON decode failures must surface ProtocolError, not RuntimeError."""
+
+    def test_handle_message_emits_protocol_error_on_bad_json(self) -> None:
+        from xtb_api.exceptions import ProtocolError
+        from xtb_api.types.websocket import WSClientConfig
+        from xtb_api.ws.ws_client import XTBWebSocketClient
+
+        cfg = WSClientConfig(
+            url="wss://test.example/x",
+            account_number=1,
+            endpoint="meta1",
+            auto_reconnect=False,
+        )
+        ws = XTBWebSocketClient(cfg, auth_manager=None)
+
+        captured: list[object] = []
+        ws.on("error", lambda err: captured.append(err))
+
+        ws._handle_message("this is not json {")
+
+        assert len(captured) == 1
+        assert isinstance(captured[0], ProtocolError)
+        assert "Failed to parse message" in str(captured[0])

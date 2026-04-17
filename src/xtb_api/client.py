@@ -15,13 +15,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from xtb_api.auth.auth_manager import AuthManager
+from xtb_api.auth.auth_manager import AuthManager, SessionSource
 from xtb_api.auth.cas_client import CASClientConfig
-from xtb_api.exceptions import InstrumentNotFoundError
+from xtb_api.exceptions import AmbiguousOutcomeError, InstrumentNotFoundError
 from xtb_api.grpc.client import GrpcClient
 from xtb_api.grpc.proto import SIDE_BUY, SIDE_SELL
 from xtb_api.types.instrument import InstrumentSearchResult, Quote
-from xtb_api.types.trading import AccountBalance, PendingOrder, Position, TradeOptions, TradeResult
+from xtb_api.types.trading import AccountBalance, PendingOrder, Position, TradeOptions, TradeOutcome, TradeResult
 from xtb_api.types.websocket import WSClientConfig
 from xtb_api.utils import price_from_decimal
 from xtb_api.ws.ws_client import XTBWebSocketClient
@@ -117,6 +117,22 @@ class XTBClient:
         await self._ws._establish_connection()
         await self._ws.register_client_info()
         await self._ws.login_with_service_ticket(service_ticket)
+
+    @property
+    def session_source(self) -> SessionSource:
+        """Where the currently-held TGT came from (see :class:`SessionSource`).
+
+        Inspect after :meth:`connect` to verify whether session reuse actually
+        happened. ``SESSION_FILE`` / ``MEMORY`` mean no fresh login occurred
+        (no XTB "new login" email); ``CAS_LOGIN`` / ``BROWSER_LOGIN`` indicate
+        that the cached TGT was missing or expired and a fresh login ran.
+        """
+        return self._auth.session_source
+
+    @property
+    def session_expires_at(self) -> float | None:
+        """Unix timestamp at which the current TGT expires (``None`` if unset)."""
+        return self._auth.session_expires_at
 
     async def disconnect(self) -> None:
         """Disconnect from XTB and clean up all resources."""
@@ -328,34 +344,39 @@ class XTBClient:
         options: TradeOptions | None,
     ) -> TradeResult:
         """Execute a trade via gRPC, resolving the symbol first."""
+        side_str = cast("Literal['buy', 'sell']", "buy" if side == SIDE_BUY else "sell")
+
         # Volume validation: reject anything that rounds to less than 1 share.
-        # The gRPC endpoint accepts integer volumes only; forwarding 0 would
-        # either silently no-op or explode with a cryptic error. Python's int()
-        # truncates toward zero, so negative inputs (e.g. -0.4 → 0, -2 → -1) are
-        # naturally rejected by the `< 1` check without a separate negativity
-        # guard — the half-up rounding is the single rule.
         rounded = int(volume + 0.5)
         if rounded < 1:
-            side_str = "buy" if side == SIDE_BUY else "sell"
             return TradeResult(
-                success=False,
+                status=TradeOutcome.INSUFFICIENT_VOLUME,
                 symbol=symbol,
-                side=cast("Literal['buy', 'sell']", side_str),
+                side=side_str,
                 volume=float(volume),
                 order_id=None,
-                error=f"insufficient_volume: {volume} rounds to {rounded} (need >= 1)",
+                error=f"{volume} rounds to {rounded} (need >= 1)",
+                error_code="INSUFFICIENT_VOLUME",
             )
 
         grpc = self._ensure_grpc()
-
-        instrument_id = await self._resolve_instrument_id(symbol)
+        try:
+            instrument_id = await self._resolve_instrument_id(symbol)
+        except InstrumentNotFoundError as exc:
+            return TradeResult(
+                status=TradeOutcome.REJECTED,
+                symbol=symbol,
+                side=side_str,
+                volume=float(volume),
+                order_id=None,
+                error=str(exc),
+                error_code="INSTRUMENT_NOT_FOUND",
+            )
 
         # Merge flat kwargs into effective SL/TP (options take precedence)
         effective_sl = options.stop_loss if options and options.stop_loss is not None else stop_loss
         effective_tp = options.take_profit if options and options.take_profit is not None else take_profit
 
-        # Convert SL/TP floats to protobuf price (value, scale)
-        # Use scale derived from the float's own decimal places (up to 5)
         sl_value = sl_scale = tp_value = tp_scale = None
         if effective_sl is not None:
             p = price_from_decimal(effective_sl, _decimal_places(effective_sl))
@@ -364,20 +385,7 @@ class XTBClient:
             p = price_from_decimal(effective_tp, _decimal_places(effective_tp))
             tp_value, tp_scale = p.value, p.scale
 
-        result = await grpc.execute_order(
-            instrument_id,
-            volume,
-            side,
-            stop_loss_value=sl_value,
-            stop_loss_scale=sl_scale,
-            take_profit_value=tp_value,
-            take_profit_scale=tp_scale,
-        )
-
-        # Retry ONLY on auth error (RBAC/expired JWT), not on trade rejection
-        if not result.success and result.error and "RBAC" in result.error:
-            logger.info("RBAC error, refreshing JWT and retrying...")
-            grpc.invalidate_jwt()
+        try:
             result = await grpc.execute_order(
                 instrument_id,
                 volume,
@@ -387,52 +395,153 @@ class XTBClient:
                 take_profit_value=tp_value,
                 take_profit_scale=tp_scale,
             )
-
-        side_str = "buy" if side == SIDE_BUY else "sell"
-
-        if not result.success:
+        except AmbiguousOutcomeError as exc:
             return TradeResult(
-                success=False,
+                status=TradeOutcome.AMBIGUOUS,
                 symbol=symbol,
-                side=cast("Literal['buy', 'sell']", side_str),
+                side=side_str,
                 volume=float(volume),
-                order_id=result.order_id,
-                error=result.error,
+                order_id=None,
+                error=str(exc),
+                error_code="AMBIGUOUS_NO_RESPONSE",
             )
 
-        fill_price = await self._poll_fill_price(symbol)
+        # F02/F13: detect RBAC/AUTH_EXPIRED via grpc_status 7 — reliable
+        # regardless of the free-text error message.
+        if not result.success and getattr(result, "grpc_status", 0) == 7:
+            # Idempotency probe: did the first call actually fill despite
+            # the RBAC error? Compare live positions against the request.
+            existing = await self._find_matching_position(symbol, volume, side_str)
+            if existing is not None:
+                logger.info(
+                    "RBAC returned but matching position %s already exists — skipping retry (idempotent short-circuit)",
+                    existing.order_id,
+                )
+                return TradeResult(
+                    status=TradeOutcome.FILLED,
+                    symbol=symbol,
+                    side=side_str,
+                    volume=float(volume),
+                    price=existing.open_price,
+                    order_id=existing.order_id,
+                    error=None,
+                    error_code=None,
+                )
+
+            logger.info("RBAC error, refreshing JWT and retrying...")
+            grpc.invalidate_jwt()
+            try:
+                result = await grpc.execute_order(
+                    instrument_id,
+                    volume,
+                    side,
+                    stop_loss_value=sl_value,
+                    stop_loss_scale=sl_scale,
+                    take_profit_value=tp_value,
+                    take_profit_scale=tp_scale,
+                )
+            except AmbiguousOutcomeError as exc:
+                return TradeResult(
+                    status=TradeOutcome.AMBIGUOUS,
+                    symbol=symbol,
+                    side=side_str,
+                    volume=float(volume),
+                    order_id=None,
+                    error=str(exc),
+                    error_code="AMBIGUOUS_NO_RESPONSE",
+                )
+
+        return await self._build_trade_result(result, symbol, side_str, volume)
+
+    async def _build_trade_result(
+        self,
+        grpc_result: Any,
+        symbol: str,
+        side_str: Literal["buy", "sell"],
+        volume: int,
+    ) -> TradeResult:
+        """Map a GrpcTradeResult to a typed TradeResult."""
+        if grpc_result.success:
+            fill_price, fill_code = await self._poll_fill_price(symbol)
+            return TradeResult(
+                status=TradeOutcome.FILLED,
+                symbol=symbol,
+                side=side_str,
+                volume=float(volume),
+                price=fill_price,
+                order_id=grpc_result.order_id,
+                error=None,
+                error_code=fill_code,
+            )
+
+        # Non-success: categorize by grpc_status / error text.
+        status_code = getattr(grpc_result, "grpc_status", 0) or 0
+        err_text = grpc_result.error or ""
+        if status_code == 7:
+            outcome = TradeOutcome.AUTH_EXPIRED
+            error_code: str | None = "RBAC_DENIED"
+        else:
+            outcome = TradeOutcome.REJECTED
+            error_code = None
+
         return TradeResult(
-            success=True,
+            status=outcome,
             symbol=symbol,
-            side=cast("Literal['buy', 'sell']", side_str),
+            side=side_str,
             volume=float(volume),
-            price=fill_price,
-            order_id=result.order_id,
-            error=None,
+            order_id=grpc_result.order_id,
+            error=err_text or None,
+            error_code=error_code,
         )
 
-    async def _poll_fill_price(self, symbol: str, attempts: int = 3, delay_sec: float = 1.0) -> float | None:
-        """Poll positions after a successful trade to determine the actual fill price.
+    async def _find_matching_position(
+        self, symbol: str, volume: int, side_str: Literal["buy", "sell"]
+    ) -> Position | None:
+        """Find a live position that plausibly corresponds to a just-sent trade.
 
-        Returns None if the position does not appear within `attempts` tries.
-        The trade still succeeded — the order ID is the authoritative record.
+        Matching is best-effort: symbol (case-insensitive) + side + volume.
+        A match means the first submission landed despite the RBAC error —
+        caller must return FILLED instead of retrying.
+        """
+        try:
+            positions = await self._ws.get_positions()
+        except Exception as exc:
+            logger.warning("Idempotency probe failed (get_positions): %s", exc)
+            return None
+
+        target = symbol.upper()
+        for p in positions:
+            if p.symbol.upper() == target and p.side == side_str and abs(p.volume - float(volume)) < 1e-9:
+                return p
+        return None
+
+    async def _poll_fill_price(
+        self, symbol: str, attempts: int = 3, delay_sec: float = 1.0
+    ) -> tuple[float | None, str | None]:
+        """Poll positions after a successful trade to determine the fill price.
+
+        Returns ``(price, error_code)``. ``error_code`` is None when the
+        price was observed, ``"FILL_PRICE_UNKNOWN"`` when the position did
+        not appear within ``attempts`` tries. The trade still succeeded —
+        the order ID is the authoritative record.
         """
         target = symbol.upper()
         for i in range(attempts):
             try:
                 positions = await self._ws.get_positions()
-                # Position.symbol carries the plain symbol name from the WS
-                # xcfdtrade.symbol field (e.g. "CIG.PL"), not the _9-suffixed
-                # symbol_key. Case-insensitive compare is enough.
                 for p in positions:
                     if p.symbol.upper() == target:
-                        return p.open_price
+                        return p.open_price, None
             except Exception as exc:
                 logger.warning("Fill-price poll attempt %d/%d failed: %s", i + 1, attempts, exc)
             if i < attempts - 1:
                 await asyncio.sleep(delay_sec)
-        logger.warning("Could not determine fill price for %s after %d attempts", symbol, attempts)
-        return None
+        logger.warning(
+            "Could not determine fill price for %s after %d attempts",
+            symbol,
+            attempts,
+        )
+        return None, "FILL_PRICE_UNKNOWN"
 
 
 def _decimal_places(value: float, max_scale: int = 5) -> int:

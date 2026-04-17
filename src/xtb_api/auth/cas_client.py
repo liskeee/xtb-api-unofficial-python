@@ -21,8 +21,14 @@ from typing import TYPE_CHECKING
 import httpx
 from pydantic import BaseModel
 
-from xtb_api.types.websocket import (
+from xtb_api.exceptions import (
+    AccountBlockedError,
     CASError,
+    InvalidCredentialsError,
+    RateLimitedError,
+    TwoFactorRequiredError,
+)
+from xtb_api.types.websocket import (
     CASLoginResult,
     CASLoginSuccess,
     CASLoginTwoFactorRequired,
@@ -32,6 +38,23 @@ if TYPE_CHECKING:
     from xtb_api.auth.browser_auth import BrowserCASAuth
 
 logger = logging.getLogger(__name__)
+
+_CAS_CODE_TO_CLASS: dict[str, type[CASError]] = {
+    "CAS_GET_TGT_UNAUTHORIZED": InvalidCredentialsError,
+    "CAS_GET_TGT_TOO_MANY_OTP_ERROR": RateLimitedError,
+    "CAS_GET_TGT_OTP_LIMIT_REACHED_ERROR": RateLimitedError,
+    "CAS_GET_TGT_OTP_ACCESS_BLOCKED_ERROR": AccountBlockedError,
+    "CAS_2FA_MISSING_TICKET": TwoFactorRequiredError,
+}
+
+
+def _cas_error_for_code(code: str, message: str) -> CASError:
+    """Return the most specific CAS exception subclass for a given code.
+
+    Unknown codes fall back to plain ``CASError``.
+    """
+    cls = _CAS_CODE_TO_CLASS.get(code, CASError)
+    return cls(code, message)
 
 
 class CASServiceTicketResult(BaseModel):
@@ -152,7 +175,7 @@ class CASClient:
         resp = await client.post(url, json=payload, headers=headers)
 
         if resp.status_code == 401:
-            raise CASError("CAS_GET_TGT_UNAUTHORIZED", "Invalid credentials")
+            raise _cas_error_for_code("CAS_GET_TGT_UNAUTHORIZED", "Invalid credentials")
 
         if not resp.is_success:
             raise CASError(
@@ -186,16 +209,16 @@ class CASClient:
         if code:
             match code:
                 case "CAS_GET_TGT_UNAUTHORIZED":
-                    raise CASError(code, "Invalid email or password")
+                    raise _cas_error_for_code(code, "Invalid email or password")
                 case "CAS_GET_TGT_TOO_MANY_OTP_ERROR":
                     wait = result.get("data", {}).get("otpThrottleTimeRemaining", 60)
-                    raise CASError(code, f"Too many OTP attempts. Wait {wait}s")
+                    raise _cas_error_for_code(code, f"Too many OTP attempts. Wait {wait}s")
                 case "CAS_GET_TGT_OTP_LIMIT_REACHED_ERROR":
-                    raise CASError(code, "OTP attempt limit reached. Try again later")
+                    raise _cas_error_for_code(code, "OTP attempt limit reached. Try again later")
                 case "CAS_GET_TGT_OTP_ACCESS_BLOCKED_ERROR":
-                    raise CASError(code, "Account temporarily blocked due to too many failed OTP attempts")
+                    raise _cas_error_for_code(code, "Account temporarily blocked due to too many failed OTP attempts")
                 case _:
-                    raise CASError(code, result.get("message", "CAS login failed"))
+                    raise _cas_error_for_code(code, result.get("message", "CAS login failed"))
 
         raise CASError("CAS_UNEXPECTED_RESPONSE", f"Unexpected login response: {result}")
 
@@ -234,7 +257,7 @@ class CASClient:
             )
 
         if resp.status_code == 401:
-            raise CASError("CAS_GET_TGT_UNAUTHORIZED", "Invalid credentials")
+            raise _cas_error_for_code("CAS_GET_TGT_UNAUTHORIZED", "Invalid credentials")
 
         raise CASError(
             "CAS_V1_LOGIN_FAILED",
@@ -272,7 +295,7 @@ class CASClient:
         # Backward compat: accept session_id as login_ticket
         ticket = login_ticket or session_id or ""
         if not ticket:
-            raise CASError("CAS_2FA_MISSING_TICKET", "No login ticket provided")
+            raise _cas_error_for_code("CAS_2FA_MISSING_TICKET", "No login ticket provided")
 
         url = f"{self._config.base_url}v2/tickets"
 
@@ -322,7 +345,7 @@ class CASClient:
 
         code_field = result.get("code")
         if code_field:
-            raise CASError(code_field, result.get("message", "Two-factor authentication failed"))
+            raise _cas_error_for_code(code_field, result.get("message", "Two-factor authentication failed"))
 
         raise CASError(
             "CAS_2FA_UNEXPECTED_RESPONSE",

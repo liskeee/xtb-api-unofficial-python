@@ -10,6 +10,9 @@ dist/
 .env
 .env.*
 !.env.example
+.xtb_session
+.xtb_session_cookies.json
+*_cookies.json
 __pycache__/
 uv.lock
 .playwright-mcp/

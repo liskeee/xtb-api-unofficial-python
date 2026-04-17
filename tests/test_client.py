@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from xtb_api.client import XTBClient, _decimal_places
-from xtb_api.exceptions import InstrumentNotFoundError
 from xtb_api.grpc.proto import SIDE_BUY, SIDE_SELL
 from xtb_api.grpc.types import GrpcTradeResult
 from xtb_api.types.instrument import InstrumentSearchResult
@@ -329,14 +328,16 @@ class TestXTBClientTrade:
         client = self._make_client()
         grpc = client._ensure_grpc()
 
-        # First call returns RBAC error, second succeeds
+        # First call returns RBAC error (grpc_status=7), second succeeds
         grpc.execute_order = AsyncMock(
             side_effect=[
-                GrpcTradeResult(success=False, error="gRPC RBAC: access denied"),
+                GrpcTradeResult(success=False, error="gRPC RBAC: access denied", grpc_status=7),
                 GrpcTradeResult(success=True, order_id="uuid-retry"),
             ]
         )
         grpc.invalidate_jwt = MagicMock()
+        # Idempotency probe sees no matching position → retry proceeds.
+        client._ws.get_positions = AsyncMock(return_value=[])
 
         result = await client.buy("CIG.PL", volume=19)
 
@@ -359,7 +360,9 @@ class TestXTBClientTrade:
         assert grpc.execute_order.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_symbol_not_found_raises(self):
+    async def test_symbol_not_found_returns_rejected(self):
+        from xtb_api.types.trading import TradeOutcome
+
         client = XTBClient(
             email="test@example.com",
             password="secret",
@@ -367,8 +370,10 @@ class TestXTBClientTrade:
         )
         client._ws.search_instrument = AsyncMock(return_value=[])
 
-        with pytest.raises(InstrumentNotFoundError):
-            await client.buy("NONEXISTENT", volume=1)
+        result = await client.buy("NONEXISTENT", volume=1)
+
+        assert result.status is TradeOutcome.REJECTED
+        assert result.error_code == "INSTRUMENT_NOT_FOUND"
 
 
 def test_v0_5_public_surface_imports() -> None:

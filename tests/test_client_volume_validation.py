@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from xtb_api.client import XTBClient
-from xtb_api.types.trading import TradeResult
+from xtb_api.types.trading import TradeOutcome, TradeResult
 
 
 @pytest.fixture
@@ -34,8 +34,8 @@ async def test_buy_rejects_zero_volume(client: XTBClient) -> None:
     result = await client.buy("CIG.PL", volume=0)
     assert isinstance(result, TradeResult)
     assert result.success is False
-    assert result.error is not None
-    assert "insufficient_volume" in result.error
+    assert result.status is TradeOutcome.INSUFFICIENT_VOLUME
+    assert result.error_code == "INSUFFICIENT_VOLUME"
     # gRPC must not be touched
     client._fake_grpc.execute_order.assert_not_awaited()  # type: ignore[attr-defined]
 
@@ -44,7 +44,8 @@ async def test_buy_rejects_zero_volume(client: XTBClient) -> None:
 async def test_sell_rejects_zero_volume(client: XTBClient) -> None:
     result = await client.sell("AAPL.US", volume=0)
     assert result.success is False
-    assert "insufficient_volume" in (result.error or "")
+    assert result.status is TradeOutcome.INSUFFICIENT_VOLUME
+    assert result.error_code == "INSUFFICIENT_VOLUME"
     client._fake_grpc.execute_order.assert_not_awaited()  # type: ignore[attr-defined]
 
 
@@ -52,7 +53,8 @@ async def test_sell_rejects_zero_volume(client: XTBClient) -> None:
 async def test_buy_rejects_negative_volume(client: XTBClient) -> None:
     result = await client.buy("CIG.PL", volume=-1)
     assert result.success is False
-    assert "insufficient_volume" in (result.error or "")
+    assert result.status is TradeOutcome.INSUFFICIENT_VOLUME
+    assert result.error_code == "INSUFFICIENT_VOLUME"
     client._fake_grpc.execute_order.assert_not_awaited()  # type: ignore[attr-defined]
 
 
@@ -80,7 +82,8 @@ async def test_buy_rejects_fractional_below_half(client: XTBClient) -> None:
     """volume=0.49 rounds down to 0 and must be rejected."""
     result = await client.buy("CIG.PL", volume=0.49)  # type: ignore[arg-type]
     assert result.success is False
-    assert "insufficient_volume" in (result.error or "")
+    assert result.status is TradeOutcome.INSUFFICIENT_VOLUME
+    assert result.error_code == "INSUFFICIENT_VOLUME"
     client._fake_grpc.execute_order.assert_not_awaited()  # type: ignore[attr-defined]
 
 

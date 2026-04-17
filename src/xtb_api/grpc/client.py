@@ -24,8 +24,8 @@ if TYPE_CHECKING:
     from xtb_api.auth.auth_manager import AuthManager
 
 from xtb_api.exceptions import (
+    AmbiguousOutcomeError,
     AuthenticationError,
-    ProtocolError,
 )
 from xtb_api.grpc.proto import (
     GRPC_AUTH_ENDPOINT,
@@ -107,7 +107,7 @@ class GrpcClient:
         resp.raise_for_status()
 
         if not resp.text:
-            raise ProtocolError("gRPC call returned empty response")
+            return b""
 
         return base64.b64decode(resp.text)
 
@@ -142,6 +142,9 @@ class GrpcClient:
         body_b64 = build_grpc_web_text_body(proto_msg)
 
         response_bytes = await self._grpc_call(GRPC_AUTH_ENDPOINT, body_b64, jwt=None)
+
+        if not response_bytes:
+            raise AuthenticationError("CreateAccessToken returned an empty response — TGT may be invalid")
 
         jwt = extract_jwt(response_bytes)
         if not jwt:
@@ -248,8 +251,18 @@ class GrpcClient:
 
         try:
             response_bytes = await self._grpc_call(GRPC_NEW_ORDER_ENDPOINT, body_b64, jwt=jwt)
-        except Exception as e:
+        except httpx.HTTPError as e:
+            # Network / HTTP errors are surfaced as failed trades. Unexpected
+            # errors (e.g. ValueError from a logic bug, AssertionError) are
+            # propagated so they stop execution and hit logging with a full
+            # traceback.
+            logger.warning("gRPC trade network error: %s", e, exc_info=True)
             return GrpcTradeResult(success=False, error=str(e))
+
+        if not response_bytes:
+            # HTTP POST succeeded but the gRPC body is empty. The order may
+            # or may not have been placed; the caller must reconcile.
+            raise AmbiguousOutcomeError("gRPC trade endpoint returned an empty response; outcome ambiguous")
 
         logger.debug(
             "gRPC response: %d bytes — %s",
@@ -310,12 +323,13 @@ class GrpcClient:
         # Error cases
         status = grpc_status if grpc_status is not None else 0
         response_text = response_bytes.decode("latin-1", errors="replace")
-        if grpc_message and "RBAC" in grpc_message or "RBAC" in response_text:
-            error_msg = "gRPC RBAC: access denied — JWT may be expired"
+        if status == 7:
+            detail = grpc_message or response_text
+            error_msg = f"gRPC RBAC/auth denied: {detail}"
         elif grpc_message:
             error_msg = f"gRPC error: grpc-message: {grpc_message}"
         else:
-            error_msg = f"gRPC order rejected: {response_text[:200]}"
+            error_msg = f"gRPC order rejected: {response_text}"
 
         logger.error(error_msg)
         return GrpcTradeResult(success=False, grpc_status=status, error=error_msg)
