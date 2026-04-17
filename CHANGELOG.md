@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v0.6.0 (2026-04-17)
+
+### Chores
+
+- Ignore .worktrees/ directory
+  ([`9ae4365`](https://github.com/liskeee/xtb-api-unofficial-python/commit/9ae436584a85ee3e3707cb265704bf6a4c7dfad8))
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Documentation
+
+- Add audit and roadmap design (2026-04-17)
+  ([`6f77f5b`](https://github.com/liskeee/xtb-api-unofficial-python/commit/6f77f5ba6d09376bd5aacb1a13b78d31ac73b4c1))
+
+Deep audit of xtb-api-python keyed to real-world usage in xtb-investor-pro. Catalogs 40 findings (2
+  P0, 20 P1, 18 P2) across stability, error classification, and external-user ergonomics, each cited
+  to file:line. Groups fixes into five workstreams (W1 typed outcomes + idempotent retry, W2
+  loop-safe client, W3 Playwright-minimized auth, W4 transport split + wire fixtures, W5 install UX
+  polish); W1+W2+W3 bundle into one breaking v1.0, W4 and W5 ship additively. No implementation —
+  each workstream enters its own design+plan loop next.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Features
+
+- **api**: Add user authentication endpoint plan
+  ([`59d00e9`](https://github.com/liskeee/xtb-api-unofficial-python/commit/59d00e93689f2da094e1783eaf566e1359593607))
+
+
 ## v0.5.4 (2026-04-15)
 
 ### Bug Fixes
