@@ -315,7 +315,7 @@ class GrpcClient:
         elif grpc_message:
             error_msg = f"gRPC error: grpc-message: {grpc_message}"
         else:
-            error_msg = f"gRPC order rejected: {response_text[:200]}"
+            error_msg = f"gRPC order rejected: {response_text}"
 
         logger.error(error_msg)
         return GrpcTradeResult(success=False, grpc_status=status, error=error_msg)

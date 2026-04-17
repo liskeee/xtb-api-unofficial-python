@@ -266,3 +266,28 @@ class TestGrpcClientDisconnect:
         assert client._jwt_timestamp == 0.0
         assert client._http is None
         mock_http.aclose.assert_called_once()
+
+
+class TestParseTradeResponsePreservesFullError:
+    """F22: server error text must not be clipped to 200 chars."""
+
+    def test_long_server_error_preserved(self) -> None:
+        from xtb_api.grpc.client import GrpcClient
+
+        client = GrpcClient(account_number="12345678")
+
+        # Rejected trade with a long textual detail in the data frame.
+        long_detail = "x" * 500
+        data_payload = f"error detail: {long_detail}".encode()
+        data_frame = struct.pack(">BI", 0, len(data_payload)) + data_payload
+        trailers = b"grpc-status: 9\r\n"  # FAILED_PRECONDITION
+        trailer_frame = struct.pack(">BI", 0x80, len(trailers)) + trailers
+        response_bytes = data_frame + trailer_frame
+
+        result = client._parse_trade_response(response_bytes)
+
+        assert result.success is False
+        assert result.error is not None
+        # Full long_detail must appear in the error text — not truncated.
+        assert long_detail in result.error
+        assert len(result.error) > 200
