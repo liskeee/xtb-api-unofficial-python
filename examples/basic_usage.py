@@ -1,64 +1,71 @@
-"""Basic usage example for xtb-api-python."""
+"""Basic usage example for xtb-api-python.
+
+Shows: connect, confirm session reuse, read balance / positions / quote,
+search instruments. Read-only — no trades placed.
+
+Usage::
+
+    export XTB_EMAIL=you@example.com
+    export XTB_PASSWORD=...
+    export XTB_ACCOUNT_NUMBER=12345678
+    # Optional:
+    #   XTB_TOTP_SECRET   — Base32 TOTP secret for auto-2FA
+    #   XTB_WS_URL        — override WebSocket endpoint (default: real)
+    python examples/basic_usage.py
+"""
+
+from __future__ import annotations
 
 import asyncio
 import os
+import time
+from pathlib import Path
 
-from xtb_api import XTBClient, WSAuthOptions, WSCredentials
+from xtb_api import SessionSource, XTBClient
 
 
-async def main():
-    # Create client with WebSocket mode
-    client = XTBClient.websocket(
-        url=os.getenv("XTB_WS_URL", "wss://api5demoa.x-station.eu/v1/xstation"),
-        account_number=int(os.getenv("XTB_ACCOUNT_NUMBER", "12345678")),
-        auth=WSAuthOptions(
-            credentials=WSCredentials(
-                email=os.getenv("XTB_EMAIL", "your@email.com"),
-                password=os.getenv("XTB_PASSWORD", "your-password"),
-            )
-        ),
+async def main() -> None:
+    client = XTBClient(
+        email=os.environ["XTB_EMAIL"],
+        password=os.environ["XTB_PASSWORD"],
+        account_number=int(os.environ["XTB_ACCOUNT_NUMBER"]),
+        totp_secret=os.environ.get("XTB_TOTP_SECRET", ""),
+        ws_url=os.environ.get("XTB_WS_URL", "wss://api5reala.x-station.eu/v1/xstation"),
+        session_file=Path.home() / ".xtb_session",
     )
 
     try:
-        # Connect and authenticate
         await client.connect()
-        print("✅ Connected and authenticated!")
 
-        # Get account info
-        account_number = await client.get_account_number()
-        print(f"📊 Account: #{account_number}")
+        # Confirm whether the cached TGT was reused. If this prints CAS_LOGIN
+        # or BROWSER_LOGIN on every run, XTB will email a login notification
+        # every time — session caching is misconfigured.
+        src = client.session_source
+        if src in (SessionSource.SESSION_FILE, SessionSource.MEMORY):
+            remaining = int((client.session_expires_at or 0) - time.time())
+            print(f"Connected (session reused, TGT valid for another {remaining // 3600}h {(remaining % 3600) // 60}m)")
+        else:
+            print(f"Connected (fresh login: {src.value} — XTB will email a notification)")
 
-        # Get balance
         balance = await client.get_balance()
-        print(f"💰 Balance: {balance.balance:.2f} {balance.currency}")
-        print(f"📈 Equity: {balance.equity:.2f} {balance.currency}")
-        print(f"🆓 Free Margin: {balance.free_margin:.2f} {balance.currency}")
+        print(f"Balance: {balance.balance:.2f} {balance.currency}  equity: {balance.equity:.2f}")
 
-        # Search instruments
-        results = await client.search_instrument("Apple")
-        print(f"\n🔍 Search 'Apple' — {len(results)} results:")
-        for r in results[:5]:
-            print(f"  {r.symbol} — {r.description} (key: {r.symbol_key})")
-
-        # Get quote
-        quote = await client.get_quote("AAPL.US")
-        if quote:
-            print(f"\n📊 AAPL.US — Bid: {quote.bid}, Ask: {quote.ask}, Spread: {quote.spread:.4f}")
-
-        # Get open positions
         positions = await client.get_positions()
-        print(f"\n📋 Open positions: {len(positions)}")
-        for pos in positions:
-            print(f"  {pos.symbol} {pos.side.upper()} {pos.volume} @ {pos.open_price}")
+        print(f"Open positions: {len(positions)}")
+        for p in positions:
+            print(f"  {p.symbol:<10} {p.side:<4} vol={p.volume}  open={p.open_price}")
 
-        # ⚠️ Execute trade (UNCOMMENT WITH CAUTION — use demo account!)
-        # from xtb_api import TradeOptions
-        # result = await client.buy("CIG.PL", 100, TradeOptions(stop_loss=2.40, take_profit=2.80))
-        # print(f"Trade: {'✅' if result.success else '❌'} {result}")
+        results = await client.search_instrument("Apple")
+        print(f"Search 'Apple': {len(results)} hits")
+        for r in results[:5]:
+            print(f"  {r.symbol:<10} {r.description}")
+
+        quote = await client.get_quote("AAPL.US")
+        if quote is not None:
+            print(f"AAPL.US  bid={quote.bid}  ask={quote.ask}  spread={quote.ask - quote.bid:.4f}")
 
     finally:
         await client.disconnect()
-        print("\n🔌 Disconnected.")
 
 
 if __name__ == "__main__":

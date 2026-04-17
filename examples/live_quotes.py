@@ -1,71 +1,69 @@
-"""Live quotes streaming example for xtb-api-python."""
+"""Live quotes streaming example for xtb-api-python.
+
+Subscribes to tick data for a handful of symbols via the WebSocket push
+channel and prints each update for 60 seconds.
+
+Symbols are passed as plain ticker names — ``XTBClient.subscribe_ticks``
+resolves them to the internal symbol-key format automatically.
+"""
+
+from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+from pathlib import Path
+from typing import Any
 
-from xtb_api import XTBClient, WSAuthOptions, WSCredentials
+from xtb_api import XTBClient
+
+SYMBOLS = ["CIG.PL", "AAPL.US", "EURUSD"]
+STREAM_SECONDS = 60
 
 
-async def main():
-    client = XTBClient.websocket(
-        url=os.getenv("XTB_WS_URL", "wss://api5demoa.x-station.eu/v1/xstation"),
-        account_number=int(os.getenv("XTB_ACCOUNT_NUMBER", "12345678")),
-        auth=WSAuthOptions(
-            credentials=WSCredentials(
-                email=os.getenv("XTB_EMAIL", "your@email.com"),
-                password=os.getenv("XTB_PASSWORD", "your-password"),
-            )
-        ),
+async def main() -> None:
+    client = XTBClient(
+        email=os.environ["XTB_EMAIL"],
+        password=os.environ["XTB_PASSWORD"],
+        account_number=int(os.environ["XTB_ACCOUNT_NUMBER"]),
+        totp_secret=os.environ.get("XTB_TOTP_SECRET", ""),
+        ws_url=os.environ.get("XTB_WS_URL", "wss://api5reala.x-station.eu/v1/xstation"),
+        session_file=Path.home() / ".xtb_session",
     )
+
+    def on_tick(tick: dict[str, Any]) -> None:
+        symbol = tick.get("symbol", "?")
+        bid = tick.get("bid", 0.0)
+        ask = tick.get("ask", 0.0)
+        print(f"tick  {symbol:<10} bid={bid:<10.4f} ask={ask:<10.4f} spread={ask - bid:.4f}")
+
+    def on_position(pos: dict[str, Any]) -> None:
+        side = "BUY" if pos.get("side") == 1 else "SELL"
+        print(f"pos   {pos.get('symbol', '?'):<10} {side} vol={pos.get('volume', 0)}")
+
+    client.on("tick", on_tick)
+    client.on("position", on_position)
 
     try:
         await client.connect()
-        print("✅ Connected!")
+        print(f"Connected ({client.session_source.value}). Subscribing to {len(SYMBOLS)} symbols.")
 
-        ws = client.ws
-        if not ws:
-            print("❌ WebSocket client not available")
-            return
-
-        # Register tick handler
-        def on_tick(tick):
-            symbol = tick.get("symbol", "?")
-            bid = tick.get("bid", 0)
-            ask = tick.get("ask", 0)
-            print(f"📊 {symbol}: Bid={bid:.4f} Ask={ask:.4f} Spread={ask-bid:.4f}")
-
-        def on_position(pos):
-            symbol = pos.get("symbol", "?")
-            side = "BUY" if pos.get("side") == 1 else "SELL"
-            volume = pos.get("volume", 0)
-            print(f"📋 Position update: {symbol} {side} {volume}")
-
-        ws.on("tick", on_tick)
-        ws.on("position", on_position)
-
-        # Subscribe to some symbols
-        symbols = ["9_CIG.PL_6", "9_AAPL.US_6", "1_EURUSD_1"]
-        for sym_key in symbols:
+        for symbol in SYMBOLS:
             try:
-                await ws.subscribe_ticks(sym_key)
-                print(f"✅ Subscribed to {sym_key}")
-            except Exception as e:
-                print(f"⚠️ Failed to subscribe to {sym_key}: {e}")
+                await client.subscribe_ticks(symbol)
+                print(f"  subscribed: {symbol}")
+            except Exception as exc:
+                print(f"  subscribe failed for {symbol}: {exc}")
 
-        # Stream for 60 seconds
-        print("\n📡 Streaming live quotes for 60 seconds...")
-        await asyncio.sleep(60)
+        print(f"Streaming for {STREAM_SECONDS}s — Ctrl-C to stop early.")
+        await asyncio.sleep(STREAM_SECONDS)
 
-        # Unsubscribe
-        for sym_key in symbols:
-            try:
-                await ws.unsubscribe_ticks(sym_key)
-            except Exception:
-                pass
+        for symbol in SYMBOLS:
+            with contextlib.suppress(Exception):
+                await client.unsubscribe_ticks(symbol)
 
     finally:
         await client.disconnect()
-        print("\n🔌 Disconnected.")
 
 
 if __name__ == "__main__":
