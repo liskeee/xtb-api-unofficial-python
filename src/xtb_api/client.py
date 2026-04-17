@@ -379,19 +379,51 @@ class XTBClient:
                 error_code="AMBIGUOUS_NO_RESPONSE",
             )
 
-        # Retry ONLY on auth error (RBAC/expired JWT), not on trade rejection
-        if not result.success and result.error and "RBAC" in result.error:
+        # F02/F13: detect RBAC/AUTH_EXPIRED via grpc_status 7 — reliable
+        # regardless of the free-text error message.
+        if not result.success and getattr(result, "grpc_status", 0) == 7:
+            # Idempotency probe: did the first call actually fill despite
+            # the RBAC error? Compare live positions against the request.
+            existing = await self._find_matching_position(symbol, volume, side_str)
+            if existing is not None:
+                logger.info(
+                    "RBAC returned but matching position %s already exists — "
+                    "skipping retry (idempotent short-circuit)",
+                    existing.order_id,
+                )
+                return TradeResult(
+                    status=TradeOutcome.FILLED,
+                    symbol=symbol,
+                    side=side_str,
+                    volume=float(volume),
+                    price=existing.open_price,
+                    order_id=existing.order_id,
+                    error=None,
+                    error_code=None,
+                )
+
             logger.info("RBAC error, refreshing JWT and retrying...")
             grpc.invalidate_jwt()
-            result = await grpc.execute_order(
-                instrument_id,
-                volume,
-                side,
-                stop_loss_value=sl_value,
-                stop_loss_scale=sl_scale,
-                take_profit_value=tp_value,
-                take_profit_scale=tp_scale,
-            )
+            try:
+                result = await grpc.execute_order(
+                    instrument_id,
+                    volume,
+                    side,
+                    stop_loss_value=sl_value,
+                    stop_loss_scale=sl_scale,
+                    take_profit_value=tp_value,
+                    take_profit_scale=tp_scale,
+                )
+            except AmbiguousOutcomeError as exc:
+                return TradeResult(
+                    status=TradeOutcome.AMBIGUOUS,
+                    symbol=symbol,
+                    side=side_str,
+                    volume=float(volume),
+                    order_id=None,
+                    error=str(exc),
+                    error_code="AMBIGUOUS_NO_RESPONSE",
+                )
 
         return await self._build_trade_result(result, symbol, side_str, volume)
 
@@ -435,6 +467,31 @@ class XTBClient:
             error=err_text or None,
             error_code=error_code,
         )
+
+    async def _find_matching_position(
+        self, symbol: str, volume: int, side_str: Literal["buy", "sell"]
+    ) -> Position | None:
+        """Find a live position that plausibly corresponds to a just-sent trade.
+
+        Matching is best-effort: symbol (case-insensitive) + side + volume.
+        A match means the first submission landed despite the RBAC error —
+        caller must return FILLED instead of retrying.
+        """
+        try:
+            positions = await self._ws.get_positions()
+        except Exception as exc:
+            logger.warning("Idempotency probe failed (get_positions): %s", exc)
+            return None
+
+        target = symbol.upper()
+        for p in positions:
+            if (
+                p.symbol.upper() == target
+                and p.side == side_str
+                and abs(p.volume - float(volume)) < 1e-9
+            ):
+                return p
+        return None
 
     async def _poll_fill_price(
         self, symbol: str, attempts: int = 3, delay_sec: float = 1.0

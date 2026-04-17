@@ -329,14 +329,16 @@ class TestXTBClientTrade:
         client = self._make_client()
         grpc = client._ensure_grpc()
 
-        # First call returns RBAC error, second succeeds
+        # First call returns RBAC error (grpc_status=7), second succeeds
         grpc.execute_order = AsyncMock(
             side_effect=[
-                GrpcTradeResult(success=False, error="gRPC RBAC: access denied"),
+                GrpcTradeResult(success=False, error="gRPC RBAC: access denied", grpc_status=7),
                 GrpcTradeResult(success=True, order_id="uuid-retry"),
             ]
         )
         grpc.invalidate_jwt = MagicMock()
+        # Idempotency probe sees no matching position → retry proceeds.
+        client._ws.get_positions = AsyncMock(return_value=[])
 
         result = await client.buy("CIG.PL", volume=19)
 
