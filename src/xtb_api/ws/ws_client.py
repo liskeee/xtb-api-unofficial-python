@@ -59,6 +59,9 @@ from xtb_api.ws.parsers import (
 
 logger = logging.getLogger(__name__)
 
+_BALANCE_SNAPSHOT_POLL_MS = 200
+_BALANCE_SNAPSHOT_MAX_WAIT_MS = 3000
+
 # Type alias for event callbacks
 EventCallback = Callable[..., Any]
 
@@ -513,7 +516,15 @@ class XTBWebSocketClient:
     # ─── High-level API ───
 
     async def get_balance(self) -> AccountBalance:
-        """Get account balance and equity information."""
+        """Get account balance and equity information.
+
+        XTB acks the TOTAL_BALANCE subscribe immediately with an empty
+        element list; the populated `xtotalbalance` snapshot arrives on
+        the subscription a moment later. To avoid silently returning
+        zeros, this method polls up to
+        :data:`_BALANCE_SNAPSHOT_MAX_WAIT_MS` for the first populated
+        snapshot, then falls back to whatever the last response held.
+        """
         if not self._authenticated or not self._login_result:
             raise AuthenticationError("Must be authenticated to get balance")
 
@@ -527,12 +538,28 @@ class XTBWebSocketClient:
         if not account:
             raise ProtocolError("Account not found in login result")
 
-        res = await self.send(
-            "getBalance",
-            {"getAndSubscribeElement": {"eid": SubscriptionEid.TOTAL_BALANCE}},
-        )
+        deadline = time.monotonic() + _BALANCE_SNAPSHOT_MAX_WAIT_MS / 1000
+        elements: list[dict[str, Any]] = []
+        first = True
+        while True:
+            res = await self.send(
+                "getBalance",
+                {"getAndSubscribeElement": {"eid": SubscriptionEid.TOTAL_BALANCE}},
+            )
+            elements = self._extract_elements(res)
+            if elements and (elements[0] or {}).get("value", {}).get("xtotalbalance"):
+                break
+            if time.monotonic() >= deadline:
+                if first:
+                    logger.warning(
+                        "TOTAL_BALANCE subscription never produced a snapshot within %dms; returning zeros",
+                        _BALANCE_SNAPSHOT_MAX_WAIT_MS,
+                    )
+                break
+            first = False
+            await asyncio.sleep(_BALANCE_SNAPSHOT_POLL_MS / 1000)
 
-        return parse_balance(self._extract_elements(res), account.currency, account.accountNo)
+        return parse_balance(elements, account.currency, account.accountNo)
 
     async def get_positions(self) -> list[Position]:
         """Get all open trading positions.

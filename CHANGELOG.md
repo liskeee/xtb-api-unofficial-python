@@ -50,6 +50,12 @@
   send already landed, eliminating the duplicate-order risk. (F02)
 - RBAC detection uses `grpc-status: 7` instead of string-matching
   `"RBAC"` in error text. (F13)
+- `get_balance` now polls the `TOTAL_BALANCE` subscription until the
+  `xtotalbalance` snapshot lands (bounded by
+  `_BALANCE_SNAPSHOT_MAX_WAIT_MS`). XTB's `getAndSubscribeElement`
+  acknowledges with an empty element list and pushes the real snapshot
+  asynchronously, so the previous single-shot call returned zeros for
+  freshly-opened sessions.
 
 
 ## v0.6.0 (2026-04-17)
