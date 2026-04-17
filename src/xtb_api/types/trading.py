@@ -128,18 +128,6 @@ class AccountBalance(BaseModel):
     account_number: int
 
 
-class TradeResult(BaseModel):
-    """Trade execution result."""
-
-    success: bool
-    order_id: str | None = None
-    symbol: str
-    side: Literal["buy", "sell"]
-    volume: float | None = None
-    price: float | None = None
-    error: str | None = None
-
-
 class TradeOutcome(StrEnum):
     """Typed outcome of a trade request.
 
@@ -163,3 +151,41 @@ class TradeOutcome(StrEnum):
     AUTH_EXPIRED = "AUTH_EXPIRED"
     RATE_LIMITED = "RATE_LIMITED"
     TIMEOUT = "TIMEOUT"
+
+
+class TradeResult(BaseModel):
+    """Trade execution result.
+
+    ``status`` is the authoritative field. ``success`` is a convenience
+    property equivalent to ``status is TradeOutcome.FILLED`` and is kept
+    for one-line checks.
+
+    Fields:
+        status: TradeOutcome — the typed result category.
+        order_id: broker-assigned order id, if known.
+        symbol: the symbol traded.
+        side: "buy" or "sell".
+        volume: requested volume (post-rounding for the < 1 check).
+        price: fill price, if observable via a position poll.
+        error: free-text error message from the broker (if any).
+        error_code: stable short code for the outcome flavor. Examples:
+            "INSUFFICIENT_VOLUME", "RBAC_DENIED", "AMBIGUOUS_NO_RESPONSE",
+            "FILL_PRICE_UNKNOWN", "NETWORK_ERROR". May also carry the raw
+            broker code when one is surfaced.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    status: TradeOutcome
+    symbol: str
+    side: Literal["buy", "sell"]
+    volume: float | None = None
+    price: float | None = None
+    order_id: str | None = None
+    error: str | None = None
+    error_code: str | None = None
+
+    @property
+    def success(self) -> bool:
+        """True iff ``status is TradeOutcome.FILLED``."""
+        return self.status is TradeOutcome.FILLED
