@@ -85,3 +85,34 @@ class TestExceptionHierarchy:
         from xtb_api import CASError as TopLevelCASError
 
         assert TopLevelCASError is CASError
+
+
+class TestPublicExports:
+    def test_trade_outcome_reexported_from_top_level(self) -> None:
+        from xtb_api import TradeOutcome
+
+        assert TradeOutcome.FILLED == "FILLED"
+
+    def test_ambiguous_outcome_error_reexported(self) -> None:
+        from xtb_api import AmbiguousOutcomeError
+
+        from xtb_api.exceptions import TradeError
+
+        assert issubclass(AmbiguousOutcomeError, TradeError)
+
+    def test_cas_subclasses_reexported(self) -> None:
+        from xtb_api import (
+            AccountBlockedError,
+            CASError,
+            InvalidCredentialsError,
+            RateLimitedError as CASRateLimitedError,
+            TwoFactorRequiredError,
+        )
+
+        for cls in (
+            InvalidCredentialsError,
+            AccountBlockedError,
+            CASRateLimitedError,
+            TwoFactorRequiredError,
+        ):
+            assert issubclass(cls, CASError)
