@@ -248,7 +248,12 @@ class GrpcClient:
 
         try:
             response_bytes = await self._grpc_call(GRPC_NEW_ORDER_ENDPOINT, body_b64, jwt=jwt)
-        except Exception as e:
+        except httpx.HTTPError as e:
+            # Network / HTTP errors are surfaced as failed trades. Unexpected
+            # errors (e.g. ValueError from a logic bug, AssertionError) are
+            # propagated so they stop execution and hit logging with a full
+            # traceback.
+            logger.warning("gRPC trade network error: %s", e, exc_info=True)
             return GrpcTradeResult(success=False, error=str(e))
 
         logger.debug(

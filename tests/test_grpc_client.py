@@ -291,3 +291,66 @@ class TestParseTradeResponsePreservesFullError:
         # Full long_detail must appear in the error text — not truncated.
         assert long_detail in result.error
         assert len(result.error) > 200
+
+
+class TestExecuteOrderExceptionNarrowing:
+    """F19: only network/protocol errors become GrpcTradeResult; bugs must bubble."""
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_propagates(self) -> None:
+        """A ValueError (i.e. our own bug) must not be swallowed into result.error."""
+        from xtb_api.grpc.client import GrpcClient
+
+        client = GrpcClient(account_number="12345678")
+        client._jwt = "valid-jwt"
+        client._jwt_timestamp = time.monotonic()
+
+        mock_http = AsyncMock()
+        # Simulate an unexpected bug deep in the stack.
+        mock_http.post = AsyncMock(side_effect=ValueError("boom — our bug"))
+        mock_http.is_closed = False
+        client._http = mock_http
+
+        with pytest.raises(ValueError, match="boom"):
+            await client.execute_order(9438, 19, SIDE_BUY)
+
+    @pytest.mark.asyncio
+    async def test_httpx_network_error_still_caught(self) -> None:
+        """httpx transport errors are still converted to a failed GrpcTradeResult."""
+        from xtb_api.grpc.client import GrpcClient
+
+        client = GrpcClient(account_number="12345678")
+        client._jwt = "valid-jwt"
+        client._jwt_timestamp = time.monotonic()
+
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(side_effect=httpx.ConnectError("conn refused"))
+        mock_http.is_closed = False
+        client._http = mock_http
+
+        result = await client.execute_order(9438, 19, SIDE_BUY)
+        assert result.success is False
+        assert "conn refused" in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_httpx_http_status_error_caught(self) -> None:
+        """httpx HTTP errors (5xx) also convert to failed result, not raise."""
+        from xtb_api.grpc.client import GrpcClient
+
+        client = GrpcClient(account_number="12345678")
+        client._jwt = "valid-jwt"
+        client._jwt_timestamp = time.monotonic()
+
+        failing_resp = httpx.Response(
+            500,
+            text="server error",
+            request=httpx.Request("POST", "https://example.com"),
+        )
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(return_value=failing_resp)
+        mock_http.is_closed = False
+        client._http = mock_http
+
+        result = await client.execute_order(9438, 19, SIDE_BUY)
+        assert result.success is False
+        assert result.error is not None
