@@ -24,8 +24,8 @@ if TYPE_CHECKING:
     from xtb_api.auth.auth_manager import AuthManager
 
 from xtb_api.exceptions import (
+    AmbiguousOutcomeError,
     AuthenticationError,
-    ProtocolError,
 )
 from xtb_api.grpc.proto import (
     GRPC_AUTH_ENDPOINT,
@@ -107,7 +107,7 @@ class GrpcClient:
         resp.raise_for_status()
 
         if not resp.text:
-            raise ProtocolError("gRPC call returned empty response")
+            return b""
 
         return base64.b64decode(resp.text)
 
@@ -142,6 +142,11 @@ class GrpcClient:
         body_b64 = build_grpc_web_text_body(proto_msg)
 
         response_bytes = await self._grpc_call(GRPC_AUTH_ENDPOINT, body_b64, jwt=None)
+
+        if not response_bytes:
+            raise AuthenticationError(
+                "CreateAccessToken returned an empty response — TGT may be invalid"
+            )
 
         jwt = extract_jwt(response_bytes)
         if not jwt:
@@ -255,6 +260,13 @@ class GrpcClient:
             # traceback.
             logger.warning("gRPC trade network error: %s", e, exc_info=True)
             return GrpcTradeResult(success=False, error=str(e))
+
+        if not response_bytes:
+            # HTTP POST succeeded but the gRPC body is empty. The order may
+            # or may not have been placed; the caller must reconcile.
+            raise AmbiguousOutcomeError(
+                "gRPC trade endpoint returned an empty response; outcome ambiguous"
+            )
 
         logger.debug(
             "gRPC response: %d bytes — %s",

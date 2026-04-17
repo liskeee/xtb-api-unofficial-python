@@ -354,3 +354,54 @@ class TestExecuteOrderExceptionNarrowing:
         result = await client.execute_order(9438, 19, SIDE_BUY)
         assert result.success is False
         assert result.error is not None
+
+
+class TestGrpcEmptyResponseSemantics:
+    """F01/F14: empty trade response must raise AmbiguousOutcomeError, not ProtocolError."""
+
+    @pytest.mark.asyncio
+    async def test_empty_trade_response_raises_ambiguous_outcome(self) -> None:
+        from xtb_api.exceptions import AmbiguousOutcomeError
+        from xtb_api.grpc.client import GrpcClient
+
+        client = GrpcClient(account_number="12345678")
+        client._jwt = "valid-jwt"
+        client._jwt_timestamp = time.monotonic()
+
+        # Empty body: HTTP 200 with resp.text == ""
+        empty_resp = httpx.Response(
+            200, text="", request=httpx.Request("POST", "https://example.com")
+        )
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(return_value=empty_resp)
+        mock_http.is_closed = False
+        client._http = mock_http
+
+        with pytest.raises(AmbiguousOutcomeError):
+            await client.execute_order(9438, 19, SIDE_BUY)
+
+    @pytest.mark.asyncio
+    async def test_empty_auth_response_raises_authentication_error(self) -> None:
+        """Empty response on the auth endpoint is NOT a trade-side ambiguity."""
+        from xtb_api.exceptions import AmbiguousOutcomeError, AuthenticationError
+        from xtb_api.grpc.client import GrpcClient
+
+        client = GrpcClient(account_number="12345678")
+
+        empty_resp = httpx.Response(
+            200, text="", request=httpx.Request("POST", "https://example.com")
+        )
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(return_value=empty_resp)
+        mock_http.is_closed = False
+        client._http = mock_http
+
+        with pytest.raises(AuthenticationError):
+            await client.get_jwt("TGT-test")
+
+        # And specifically NOT AmbiguousOutcomeError — auth is never ambiguous.
+        mock_http.post = AsyncMock(return_value=empty_resp)
+        client._http = mock_http
+        with pytest.raises(Exception) as exc_info:
+            await client.get_jwt("TGT-test")
+        assert not isinstance(exc_info.value, AmbiguousOutcomeError)
