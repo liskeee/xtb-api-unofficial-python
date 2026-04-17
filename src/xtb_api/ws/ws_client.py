@@ -771,7 +771,7 @@ class XTBWebSocketClient:
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError as e:
-            self._emit("error", RuntimeError(f"Failed to parse message: {e}"))
+            self._emit("error", ProtocolError(f"Failed to parse message: {e}"))
             return
 
         req_id = msg.get("reqId", "")
