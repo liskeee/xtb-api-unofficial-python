@@ -344,7 +344,18 @@ class XTBClient:
             )
 
         grpc = self._ensure_grpc()
-        instrument_id = await self._resolve_instrument_id(symbol)
+        try:
+            instrument_id = await self._resolve_instrument_id(symbol)
+        except InstrumentNotFoundError as exc:
+            return TradeResult(
+                status=TradeOutcome.REJECTED,
+                symbol=symbol,
+                side=side_str,
+                volume=float(volume),
+                order_id=None,
+                error=str(exc),
+                error_code="INSTRUMENT_NOT_FOUND",
+            )
 
         # Merge flat kwargs into effective SL/TP (options take precedence)
         effective_sl = options.stop_loss if options and options.stop_loss is not None else stop_loss

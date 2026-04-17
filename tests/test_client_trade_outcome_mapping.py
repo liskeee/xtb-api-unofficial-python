@@ -90,3 +90,24 @@ async def test_generic_rejection_returns_outcome_rejected(
 
     assert result.status is TradeOutcome.REJECTED
     assert "NO_FUNDS" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_unknown_symbol_returns_rejected_not_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from xtb_api.exceptions import InstrumentNotFoundError
+
+    client = _make_client(monkeypatch)
+    monkeypatch.setattr(
+        client,
+        "_resolve_instrument_id",
+        AsyncMock(side_effect=InstrumentNotFoundError("Symbol not found: XYZ")),
+    )
+
+    result = await client.buy("XYZ", volume=1)
+
+    assert result.status is TradeOutcome.REJECTED
+    assert result.error_code == "INSTRUMENT_NOT_FOUND"
+    assert "XYZ" in (result.error or "")
+    client._fake_grpc.execute_order.assert_not_awaited()  # type: ignore[attr-defined]
