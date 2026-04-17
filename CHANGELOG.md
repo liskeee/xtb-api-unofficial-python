@@ -1,70 +1,248 @@
 # CHANGELOG
 
 
-## [Unreleased] — v1.0 (workstream W1)
+## v0.7.0 (2026-04-17)
 
-### Breaking Changes
+### Bug Fixes
 
-- `TradeResult.success` is now a `@property` derived from
-  `status is TradeOutcome.FILLED`. Constructors no longer accept
-  `success=bool`; pass `status=TradeOutcome.*` instead. (F16)
-- Empty gRPC trade responses raise `AmbiguousOutcomeError` (a
-  `TradeError` subclass) instead of `ProtocolError` with a
-  string-matchable message. Consumers that pattern-matched on
-  `"gRPC call returned empty response"` must switch to
-  `except AmbiguousOutcomeError`. (F01, F14)
-- gRPC rejected-order messages are no longer clipped to 200 characters.
-  (F22)
-- `CASError` now has typed subclasses: `InvalidCredentialsError`,
-  `AccountBlockedError`, `RateLimitedError`, `TwoFactorRequiredError`.
-  Code reading `CASError.code` strings can migrate to
-  `except InvalidCredentialsError:` etc. `CASError` remains a parent
-  for forward compatibility. (F18)
-- Trading an unknown symbol now returns
-  `TradeResult(status=REJECTED, error_code="INSTRUMENT_NOT_FOUND")`
-  instead of raising `InstrumentNotFoundError`. This matches the
-  WebSocket-path behavior and the rest of W1's typed-outcome contract.
+- **client**: Probe positions before JWT-refresh retry to avoid duplicate orders (F02, F13)
+  ([`3433048`](https://github.com/liskeee/xtb-api-unofficial-python/commit/3433048b861d7ad447140d2d4867af9b0d1ff9b7))
 
-### Additive
+Detect RBAC/AUTH_EXPIRED via grpc_status == 7 (not free-text error match). Before invalidating the
+  JWT and retrying, probe live positions for a plausible match (symbol + side + volume). If found,
+  return FILLED with the existing order_id — the first submission landed despite the RBAC error, and
+  retrying would duplicate the order.
 
-- New `TradeOutcome` enum with values `FILLED`, `REJECTED`, `AMBIGUOUS`,
-  `INSUFFICIENT_VOLUME`, `AUTH_EXPIRED`, `RATE_LIMITED`, `TIMEOUT`.
-  Exported from the top-level `xtb_api` package. (F16)
-- `TradeResult.error_code: str | None` for stable short codes such as
-  `"INSUFFICIENT_VOLUME"`, `"RBAC_DENIED"`, `"AMBIGUOUS_NO_RESPONSE"`,
-  `"FILL_PRICE_UNKNOWN"`. (F15, F40)
-- `scripts/validate_live.py` — re-runnable validator for the typed-outcome
-  surface against a real XTB account. Read-only by default; live trades
-  gated behind `--live` AND `XTB_VALIDATE_LIVE=1`. Prints a session-reuse
-  banner on every run so consumers can confirm the cached TGT is being
-  reused (i.e. XTB will *not* email a login notification) rather than
-  discovering the regression by inbox alone.
-- New `SessionSource` enum (`UNCACHED`, `MEMORY`, `SESSION_FILE`,
-  `CAS_LOGIN`, `BROWSER_LOGIN`) exposed at the package root.
-  `XTBClient.session_source` and `XTBClient.session_expires_at` let
-  callers verify, after `connect()`, whether the run reused the cached
-  session or performed a fresh login. `AuthManager` logs the same signal
-  at INFO level.
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 
-### Fixes
+- **client**: Unknown symbol surfaces as REJECTED, not raised
+  ([`f5f3a06`](https://github.com/liskeee/xtb-api-unofficial-python/commit/f5f3a06c286cdefd170340b12be078de433a8f86))
 
-- JSON decode failures inside the WebSocket listener now emit
-  `ProtocolError` instead of a bare `RuntimeError`. (F21)
-- `GrpcClient.execute_order` now narrows its exception handling to
-  `httpx.HTTPError`; unexpected exceptions (logic bugs) propagate with
-  full tracebacks instead of being silently stuffed into
-  `GrpcTradeResult.error`. (F19)
-- JWT-refresh retry on RBAC now first checks for a matching live
-  position and short-circuits to `TradeOutcome.FILLED` if the initial
-  send already landed, eliminating the duplicate-order risk. (F02)
-- RBAC detection uses `grpc-status: 7` instead of string-matching
-  `"RBAC"` in error text. (F13)
-- `get_balance` now polls the `TOTAL_BALANCE` subscription until the
-  `xtotalbalance` snapshot lands (bounded by
-  `_BALANCE_SNAPSHOT_MAX_WAIT_MS`). XTB's `getAndSubscribeElement`
-  acknowledges with an empty element list and pushes the real snapshot
-  asynchronously, so the previous single-shot call returned zeros for
-  freshly-opened sessions.
+_execute_trade caught InstrumentNotFoundError from _resolve_instrument_id and turned it into a typed
+  TradeResult (REJECTED / INSTRUMENT_NOT_FOUND), matching the WS path and the rest of W1's
+  typed-outcome contract. Before this, gRPC-routed trades raised while WS-routed trades returned a
+  result, forcing consumers to wrap every call in try/except.
+
+Discovered while running the W1 live-validation script against a real account: the unknown-symbol
+  path broke the outcome invariant that every trade method returns a TradeResult.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **grpc**: Narrow except Exception to httpx.HTTPError in execute_order (F19)
+  ([`85086a8`](https://github.com/liskeee/xtb-api-unofficial-python/commit/85086a854a2ba9e707342805f6832e4486f5331a))
+
+The broad `except Exception` used to swallow unrelated bugs (ValueError, AssertionError) into a
+  "failed trade" result. Narrowing to `httpx.HTTPError` keeps network/HTTP failures observable while
+  letting genuine bugs bubble up with their traceback intact.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **grpc**: Preserve full server error text (was clipped to 200 chars) (F22)
+  ([`faa2a6b`](https://github.com/liskeee/xtb-api-unofficial-python/commit/faa2a6b77edd4bf0e26b2ae2de59c315b9b91230))
+
+The 200-char cap lost debug-relevant tail (e.g. validation-error details past char ~180). Callers
+  now get the full server message for logging.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **ws**: Build TradeResult with TradeOutcome (was using removed success= kwarg)
+  ([`564b1db`](https://github.com/liskeee/xtb-api-unofficial-python/commit/564b1dbc20c7e945461ffc1a849fb2491700658e))
+
+The WS trade path (XTBWebSocketClient._execute_trade) was still constructing TradeResult with the
+  removed success= kwarg. Since TradeResult now sets model_config = {"extra": "forbid"} and requires
+  status: TradeOutcome, every buy()/sell() call raised pydantic.ValidationError.
+
+Replace all three construction sites with TradeOutcome.REJECTED / TradeOutcome.FILLED, and add a
+  regression smoke test exercising each branch.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **ws**: Emit ProtocolError instead of RuntimeError on JSON decode failure (F21)
+  ([`71e0150`](https://github.com/liskeee/xtb-api-unofficial-python/commit/71e0150ff7f6f8de32da732473fec42b8b5e6c16))
+
+Malformed WS frames now surface as a typed ProtocolError. Consumers that catch `except
+  ProtocolError` will now see decode failures instead of needing a bare RuntimeError catch.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **ws**: Get_balance polls TOTAL_BALANCE until snapshot populates
+  ([`eed72bc`](https://github.com/liskeee/xtb-api-unofficial-python/commit/eed72bc5a07ae71d611f3f5934628b8aa3da4578))
+
+XTB's getAndSubscribeElement acknowledges immediately with an empty element list and pushes the
+  populated xtotalbalance snapshot later over the same WebSocket. The naive single-shot call
+  returned zeros for freshly-opened sessions — the live validator surfaced this as balance=0.0
+  equity=0.0 on an account with real funds.
+
+get_balance now polls the subscription with a 200ms cadence up to a 3000ms deadline (tunable via the
+  new _BALANCE_SNAPSHOT_POLL_MS and _BALANCE_SNAPSHOT_MAX_WAIT_MS module constants) and returns the
+  first response that carries an xtotalbalance payload. On timeout it falls back to the zeroed
+  snapshot with a warning log so the contract is preserved.
+
+The retry loop lives inside get_balance rather than the push-event layer; wiring subscription-push
+  routing into the high-level reads is W4 scope. Three regression tests pin the fast-path,
+  multi-poll, and timeout-fallback behaviors.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Chores
+
+- Add live-validation script + ignore session files
+  ([`663464d`](https://github.com/liskeee/xtb-api-unofficial-python/commit/663464d8bd206b91b21d8bef27d75009f01c7eae))
+
+scripts/validate_live.py is a re-runnable validator for the W1 typed-outcome surface against a real
+  XTB account. Default mode is read-only (balance, positions, search + non-destructive typed-failure
+  assertions). Live mode (--live AND XTB_VALIDATE_LIVE=1 — both required) also exercises buy+sell on
+  a configurable ticker (default CIG.PL).
+
+Uses a minimal inline .env parser to avoid adding python-dotenv as a dep. Accepts either
+  XTB_ACCOUNT_NUMBER or XTB_USER_ID so it plays nicely with existing consumer .env files. --env-file
+  lets callers point at an .env outside the repo.
+
+Also extends .gitignore to cover the session cache files the library creates on connect
+  (*_cookies.json, .xtb_session) — these hold auth material and must not be committed.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Code Style
+
+- Apply ruff format across src/ and tests/
+  ([`a658a66`](https://github.com/liskeee/xtb-api-unofficial-python/commit/a658a6640639a121ee6ec40fca6968b3a764bcdf))
+
+CI runs `ruff format --check` in addition to `ruff check`; four files drifted from the project
+  format (collapsed arg lists, joined short statements). Pure formatting — no functional change.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **tests**: Sort imports in exception re-export tests
+  ([`e0a84a7`](https://github.com/liskeee/xtb-api-unofficial-python/commit/e0a84a7b142eda0d60b8ae4b74a84569bafda6d6))
+
+Drop unused alias for RateLimitedError to keep ruff isort happy.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Documentation
+
+- **changelog**: Record W1 v1.0 changes
+  ([`7011c2d`](https://github.com/liskeee/xtb-api-unofficial-python/commit/7011c2dceb8f5db5987d11f230e87709144c40ef))
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Features
+
+- **auth**: Dispatch CAS error codes to typed subclasses (F18)
+  ([`3602fb3`](https://github.com/liskeee/xtb-api-unofficial-python/commit/3602fb36d1e9fab7fe121435db40dfd7e27d6cee))
+
+`_cas_error_for_code(code, message)` picks the most specific `CASError` subclass. Consumers can now
+  `except InvalidCredentialsError` instead of inspecting `.code` strings. Parent `CASError` still
+  catches every case.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **auth**: Expose SessionSource so consumers can verify TGT reuse
+  ([`246ed60`](https://github.com/liskeee/xtb-api-unofficial-python/commit/246ed60f4991e8a9aa249bf7f0326727260ad7ed))
+
+Context: XTB emails the account owner on every fresh CAS login. The library already had the plumbing
+  to avoid this (TGT session-file cache with 8h TTL, deterministic fingerprint, rememberMe=True in
+  v2 login), but there was no way for consumers to *observe* whether a given run was actually
+  reusing the cached TGT or silently falling back to a fresh login. The first signal of a regression
+  was an inbox notification.
+
+Add a typed SessionSource enum and expose it via AuthManager.session_source /
+  XTBClient.session_source plus a session_expires_at timestamp. Log the chosen source at INFO on
+  every get_tgt() call so operators can verify reuse from server logs.
+
+validate_live.py now prints a session-state banner before connect (files present/missing) and a
+  "REUSED …" / "FRESH login — XTB will email" line after connect. Running the validator twice within
+  8h must produce `session: REUSED` on the second run — if it instead reports `FRESH CAS login`
+  twice, remember-device has regressed.
+
+No behavioral change to the auth flow itself. The existing rememberMe/fingerprint/TGT-cache path is
+  untouched; this commit is pure observability.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **client**: Map trade results to TradeOutcome (F16)
+  ([`3af913c`](https://github.com/liskeee/xtb-api-unofficial-python/commit/3af913c6e36c0d0856bab3b2a9ada7ac3e3121db))
+
+BREAKING: TradeResult now carries a typed status: TradeOutcome and an optional error_code. Consumers
+  inspecting TradeResult.error text for insufficient-volume / RBAC / empty-response conditions
+  should switch to result.status and result.error_code instead.
+
+`_poll_fill_price` now returns `(price, error_code)`; error_code is "FILL_PRICE_UNKNOWN" when the
+  position did not appear within the retry budget.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **exceptions**: Add AmbiguousOutcomeError(TradeError)
+  ([`5892778`](https://github.com/liskeee/xtb-api-unofficial-python/commit/5892778775627e4b40646307dffaa6898b80cea9))
+
+Distinguishes "send succeeded but broker response didn't confirm" from generic trade failure.
+  Consumers can now `except AmbiguousOutcomeError` instead of string-matching on message text.
+
+Closes F01, F14.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **exceptions**: Add InvalidCredentialsError, AccountBlockedError, RateLimitedError,
+  TwoFactorRequiredError
+  ([`e7e7b29`](https://github.com/liskeee/xtb-api-unofficial-python/commit/e7e7b2943f78c3f3faf20eac02f1cedbdabd4b68))
+
+Four CASError subclasses let consumers branch on auth-failure kind with typed catches instead of
+  inspecting `.code` strings.
+
+Closes F18.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **grpc**: Empty trade response raises AmbiguousOutcomeError (F01, F14)
+  ([`99a668c`](https://github.com/liskeee/xtb-api-unofficial-python/commit/99a668c008ea7204165f6e7a6177e0e120f94311))
+
+BREAKING: Empty trade responses previously raised ProtocolError with the message 'gRPC call returned
+  empty response'. Consumers string-matching that message must switch to `except
+  AmbiguousOutcomeError`. Empty auth responses continue to raise AuthenticationError.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **public**: Export TradeOutcome, AmbiguousOutcomeError, CAS subclasses
+  ([`7daa506`](https://github.com/liskeee/xtb-api-unofficial-python/commit/7daa50674c6654f5fac33f664a4828e638559f47))
+
+Promote the new types from previous W1 tasks to the top-level `xtb_api` namespace so consumers can
+  `from xtb_api import TradeOutcome` without reaching into `xtb_api.types.trading` /
+  `xtb_api.exceptions`.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **types**: Add TradeOutcome enum
+  ([`3eb1ecf`](https://github.com/liskeee/xtb-api-unofficial-python/commit/3eb1ecf547c744e0a42d8b29648f1642ebb8d81f))
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **types**: Add TradeResult.status + error_code, success now derived
+  ([`f651bdf`](https://github.com/liskeee/xtb-api-unofficial-python/commit/f651bdf3b386bb7fe32c7334e126f41571d03357))
+
+BREAKING: TradeResult.success is a @property, not a pydantic field. Consumers must construct
+  TradeResult with status=TradeOutcome.* instead of success=bool.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Refactoring
+
+- **grpc**: Derive RBAC error label from grpc_status (not string match) (F13)
+  ([`9146219`](https://github.com/liskeee/xtb-api-unofficial-python/commit/914621993525c391fb5b223b8b91a3da27a7ce4d))
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Testing
+
+- End-to-end match-statement shape for TradeOutcome
+  ([`545122e`](https://github.com/liskeee/xtb-api-unofficial-python/commit/545122ebf615276e5daa3a1bc541ae28f5b0351f))
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **client**: Assert error_code signals fill-price poll exhaustion (F15, F40)
+  ([`be063a3`](https://github.com/liskeee/xtb-api-unofficial-python/commit/be063a3f49504779c12588c8dd334b499a0c4d1c))
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 
 
 ## v0.6.0 (2026-04-17)
