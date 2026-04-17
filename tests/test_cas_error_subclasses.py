@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from xtb_api.auth.cas_client import _cas_error_for_code
 from xtb_api.exceptions import (
     AccountBlockedError,
     AuthenticationError,
@@ -52,3 +53,25 @@ class TestCASErrorSubclasses:
                 pass
             else:
                 raise AssertionError(f"{cls.__name__} not caught by CASError")
+
+
+class TestCasErrorDispatch:
+    """Mapping from server-supplied CAS code to the typed subclass."""
+
+    @pytest.mark.parametrize(
+        "code,expected_cls",
+        [
+            ("CAS_GET_TGT_UNAUTHORIZED", InvalidCredentialsError),
+            ("CAS_GET_TGT_TOO_MANY_OTP_ERROR", RateLimitedError),
+            ("CAS_GET_TGT_OTP_LIMIT_REACHED_ERROR", RateLimitedError),
+            ("CAS_GET_TGT_OTP_ACCESS_BLOCKED_ERROR", AccountBlockedError),
+            ("CAS_2FA_MISSING_TICKET", TwoFactorRequiredError),
+            ("CAS_UNEXPECTED_RESPONSE", CASError),  # no mapping → plain CASError
+            ("CAS_TGT_EXPIRED", CASError),  # expired ≠ bad creds
+        ],
+    )
+    def test_dispatch(self, code: str, expected_cls: type[CASError]) -> None:
+        err = _cas_error_for_code(code, "test message")
+        assert type(err) is expected_cls
+        assert err.code == code
+        assert str(err) == "test message"
