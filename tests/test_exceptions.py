@@ -1,6 +1,7 @@
 """Tests for the exception hierarchy."""
 
 from xtb_api.exceptions import (
+    AmbiguousOutcomeError,
     AuthenticationError,
     CASError,
     InstrumentNotFoundError,
@@ -24,6 +25,7 @@ class TestExceptionHierarchy:
             CASError,
             ReconnectionError,
             TradeError,
+            AmbiguousOutcomeError,
             InstrumentNotFoundError,
             RateLimitError,
             XTBTimeoutError,
@@ -37,6 +39,7 @@ class TestExceptionHierarchy:
         assert issubclass(ReconnectionError, XTBConnectionError)
 
     def test_trade_hierarchy(self) -> None:
+        assert issubclass(AmbiguousOutcomeError, TradeError)
         assert issubclass(InstrumentNotFoundError, TradeError)
         assert issubclass(TradeError, XTBError)
 

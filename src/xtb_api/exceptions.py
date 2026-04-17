@@ -44,6 +44,18 @@ class InstrumentNotFoundError(TradeError):
     """Symbol could not be resolved to a known instrument."""
 
 
+class AmbiguousOutcomeError(TradeError):
+    """The send succeeded but the broker's response did not confirm the trade.
+
+    The order may or may not have been placed. Consumers must reconcile
+    via ``get_positions()`` to determine whether the trade is live.
+
+    Typical cause: an empty gRPC-web response body after a successful HTTP
+    POST. Previously surfaced as a ``ProtocolError`` whose message had to
+    be string-matched.
+    """
+
+
 class RateLimitError(XTBError):
     """Too many requests or OTP attempts."""
 
