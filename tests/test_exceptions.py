@@ -95,7 +95,6 @@ class TestPublicExports:
 
     def test_ambiguous_outcome_error_reexported(self) -> None:
         from xtb_api import AmbiguousOutcomeError
-
         from xtb_api.exceptions import TradeError
 
         assert issubclass(AmbiguousOutcomeError, TradeError)
@@ -105,14 +104,14 @@ class TestPublicExports:
             AccountBlockedError,
             CASError,
             InvalidCredentialsError,
-            RateLimitedError as CASRateLimitedError,
+            RateLimitedError,
             TwoFactorRequiredError,
         )
 
         for cls in (
             InvalidCredentialsError,
             AccountBlockedError,
-            CASRateLimitedError,
+            RateLimitedError,
             TwoFactorRequiredError,
         ):
             assert issubclass(cls, CASError)
