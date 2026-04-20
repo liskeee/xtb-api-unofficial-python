@@ -136,9 +136,13 @@ class BrowserCASAuth:
                 }} catch(e) {{}}
             """)
 
-            # Navigate to login page
+            # Navigate to login page.
+            # Use wait_until="commit" (response headers received) instead of
+            # "domcontentloaded": XTB's WAF injects a synchronous bot-detection
+            # script that blocks the HTML parser indefinitely, so DOMContentLoaded
+            # never fires. The email-input wait below is the real readiness gate.
             logger.info("Navigating to %s", LOGIN_URL)
-            await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT)
+            await self._page.goto(LOGIN_URL, wait_until="commit", timeout=PAGE_LOAD_TIMEOUT)
 
             # New xStation5 UI uses generic textbox inputs instead of named inputs.
             # Wait for the email field (first textbox) to appear.
