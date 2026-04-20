@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v0.7.1 (2026-04-20)
+
+### Bug Fixes
+
+- **auth**: Update navigation wait strategy for login
+  ([`ee15864`](https://github.com/liskeee/xtb-api-unofficial-python/commit/ee15864592ded9136da4c4d99d02109f5021a3df))
+
+* Change the wait strategy for navigating to the login page from "domcontentloaded" to "commit". *
+  This adjustment addresses an issue with XTB's WAF that injects a synchronous bot-detection script,
+  preventing the HTML parser from completing. * The new strategy ensures that the email input field
+  is the real readiness gate for the login process.
+
+### Documentation
+
+- **examples**: Rewrite examples against v1.0 public API
+  ([`2a25452`](https://github.com/liskeee/xtb-api-unofficial-python/commit/2a25452c357d6cbae8318d2f1ab29f9a78796f01))
+
+The three example scripts still referenced an abandoned factory API (XTBClient.websocket(...),
+  WSAuthOptions, WSCredentials, client.get_account_number(), client.ws.on(...)). They did not parse
+  against current master and were misleading for anyone onboarding against v0.7.0 / the upcoming
+  v1.0 surface.
+
+Rewrite all three against the real public API:
+
+- basic_usage.py: uses the XTBClient(email, password, account_number, ...) constructor, reports
+  session_source after connect so a reader can see whether remember-device is working, and walks
+  through balance / positions / search / quote. - live_quotes.py: subscribes via
+  client.subscribe_ticks(symbol), using plain ticker names rather than the internal sym_key format
+  (resolved internally now), with contextlib.suppress instead of bare try/except/pass on cleanup. -
+  grpc_trade.py: rewritten as a typed-outcome consumer template with an exhaustive `match
+  TradeResult.status:` over every TradeOutcome case. Gated behind XTB_EXAMPLE_TRADE=1 so running the
+  file accidentally cannot submit a real order. Replaces the old raw-Chrome-CDP / GrpcClient
+  example, which showed an internal integration no longer exposed on the public surface.
+
+All three parse, import cleanly, and pass ruff check + format.
+
+
 ## v0.7.0 (2026-04-17)
 
 ### Bug Fixes
