@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from xtb_api.config import PRESETS, resolve_account_type, resolve_ws_url
+from xtb_api.config import (
+    PRESETS,
+    resolve_account_server,
+    resolve_account_type,
+    resolve_ws_url,
+)
 
 
 class TestResolveAccountType:
@@ -96,3 +101,38 @@ class TestResolveWsUrl:
         """Empty XTB_WS_URL env is treated as unset."""
         monkeypatch.setenv("XTB_WS_URL", "")
         assert resolve_ws_url(None, "demo") == PRESETS["demo"]["ws_url"]
+
+
+class TestResolveAccountServer:
+    """account_server resolves via kwarg → XTB_ACCOUNT_SERVER env → preset."""
+
+    def test_preset_used_when_nothing_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no kwarg and no env, fall back to the preset."""
+        monkeypatch.delenv("XTB_ACCOUNT_SERVER", raising=False)
+        assert resolve_account_server(None, "demo") == PRESETS["demo"]["account_server"]
+
+    def test_real_preset_used_when_nothing_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same fallback for the real account type."""
+        monkeypatch.delenv("XTB_ACCOUNT_SERVER", raising=False)
+        assert resolve_account_server(None, "real") == PRESETS["real"]["account_server"]
+
+    def test_env_beats_preset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """XTB_ACCOUNT_SERVER overrides the preset when no kwarg."""
+        monkeypatch.setenv("XTB_ACCOUNT_SERVER", "XS-real2")
+        assert resolve_account_server(None, "demo") == "XS-real2"
+
+    def test_kwarg_beats_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Explicit kwarg wins over XTB_ACCOUNT_SERVER."""
+        monkeypatch.setenv("XTB_ACCOUNT_SERVER", "XS-real2")
+        assert resolve_account_server("XS-custom", "demo") == "XS-custom"
+
+    def test_empty_env_falls_back_to_preset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty XTB_ACCOUNT_SERVER env is treated as unset."""
+        monkeypatch.setenv("XTB_ACCOUNT_SERVER", "")
+        assert resolve_account_server(None, "demo") == PRESETS["demo"]["account_server"]

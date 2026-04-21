@@ -58,3 +58,13 @@ def resolve_ws_url(explicit: str | None, account_type: AccountType) -> str:
     if env:
         return env
     return PRESETS[account_type]["ws_url"]
+
+
+def resolve_account_server(explicit: str | None, account_type: AccountType) -> str:
+    """Resolve account_server from explicit kwarg → XTB_ACCOUNT_SERVER env → preset."""
+    if explicit is not None:
+        return explicit
+    env = os.environ.get("XTB_ACCOUNT_SERVER", "").strip()
+    if env:
+        return env
+    return PRESETS[account_type]["account_server"]
