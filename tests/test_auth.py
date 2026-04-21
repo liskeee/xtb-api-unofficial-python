@@ -235,6 +235,35 @@ class TestCASClient:
         assert exc_info.value.code == "CAS_TGT_EXPIRED"
 
     @pytest.mark.asyncio
+    async def test_get_service_ticket_missing_tgt_maps_to_expired(self):
+        """CAS v1 returns 404 when TGT is gone server-side — must surface as CAS_TGT_EXPIRED.
+
+        Observed in prod: `404 TGT-... could not be found or is considered invalid`.
+        Without this mapping, AuthManager.get_service_ticket would see
+        CAS_SERVICE_TICKET_FAILED, skip the cache-invalidation-and-retry branch, and
+        leave the client stuck on a dead TGT.
+        """
+        client = CASClient()
+
+        mock_resp = httpx.Response(
+            404,
+            text="TGT-xxx-xstation.xtb.com could not be found or is considered invalid",
+            request=httpx.Request("POST", "https://example.com"),
+        )
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
+
+        with (
+            patch("xtb_api.auth.cas_client.httpx.AsyncClient", return_value=mock_client),
+            pytest.raises(CASError) as exc_info,
+        ):
+            await client.get_service_ticket("TGT-missing", "xapi5")
+
+        assert exc_info.value.code == "CAS_TGT_EXPIRED"
+
+    @pytest.mark.asyncio
     async def test_get_service_ticket_invalid_response(self):
         client = CASClient()
 
