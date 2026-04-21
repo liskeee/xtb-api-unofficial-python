@@ -1,24 +1,142 @@
 # CHANGELOG
 
-## v0.8.0 (unreleased)
+
+## v0.9.0 (2026-04-21)
+
+### Code Style
+
+- Apply ruff format to satisfy CI lint job
+  ([`1cb54e6`](https://github.com/liskeee/xtb-api-unofficial-python/commit/1cb54e60776170e41cef180cf3526dae37358013))
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **test**: Wrap long Position literal in test_client to satisfy ruff E501
+  ([`f171f8b`](https://github.com/liskeee/xtb-api-unofficial-python/commit/f171f8b803efd5c4c1f1228da0cb21470b1eca61))
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Documentation
+
+- Document QUEUED outcome and cancel_order in README and CHANGELOG
+  ([`f939bcd`](https://github.com/liskeee/xtb-api-unofficial-python/commit/f939bcdc9f9490942bc39022fb78fbc7aada9739))
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **client**: Note empirical gRPC status mapping in cancel_order
+  ([`a02f7cd`](https://github.com/liskeee/xtb-api-unofficial-python/commit/a02f7cdba82a96e493bbe29ab55583528d8cc81d))
+
+Flag that status=7 (RBAC_DENIED) is the only non-zero grpc_status we have observed from XTB's
+  DeleteOrders endpoint; other codes fall through with error_code=None until we see them in the
+  wild.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **examples**: Add cancel_queued_order demonstrating QUEUED + cancel
+  ([`2fde06e`](https://github.com/liskeee/xtb-api-unofficial-python/commit/2fde06ea77d89fb5fbef24fb90e775026c20cd9b))
+
+- **examples**: Show QUEUED branch in grpc_trade example
+  ([`13767a8`](https://github.com/liskeee/xtb-api-unofficial-python/commit/13767a829dbb09c669747d7030438bb45cb50e9a))
+
+- **examples**: Use XTB_WS_URL for demo override in cancel_queued_order
+  ([`1324a86`](https://github.com/liskeee/xtb-api-unofficial-python/commit/1324a86ee687118c8cd493aaac99d5906d2d0a42))
+
+The earlier XTB_ACCOUNT_TYPE=demo hint forward-referenced a demo-mode feature that hasn't landed
+  yet. Align with examples/grpc_trade.py by using the ws_url override, so a copy-paste of the
+  instructions actually hits the demo endpoint.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **grpc**: Note duplicate-order behaviour in cancel_orders
+  ([`c9a6ade`](https://github.com/liskeee/xtb-api-unofficial-python/commit/c9a6ade0858e4715fdbbd4852d5de1131201b50c))
+
+- **plans**: Implementation plan for queued-orders detection and cancel
+  ([`08b973b`](https://github.com/liskeee/xtb-api-unofficial-python/commit/08b973bcf177ce6a015d50897118d46142cb0adb))
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **specs**: Design for queued orders (market closed) and cancel path
+  ([`3ee24f4`](https://github.com/liskeee/xtb-api-unofficial-python/commit/3ee24f417ab4613adaaad15a216ac01bd1cd114f))
+
+Today the library marks every grpc-status 0 as FILLED, so market-closed orders that XTB queues show
+  up as phantom fills with price=None. The spec adds a positions-then-orders detection probe, a new
+  QUEUED outcome, an order_number field on TradeResult, and a single-order cancel_order() hitting
+  DeleteOrders gRPC.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 
 ### Features
 
-- **types**: Add `TradeOutcome.QUEUED` for market-order requests that XTB
-  accepts but does not immediately fill (typically: the instrument's market
-  is closed). Previously classified as `FILLED` with `price=None` — a silent
-  misclassification.
-- **types**: Populate `TradeResult.order_number` (integer broker order
-  number) from the gRPC `NewMarketOrder` response for both filled and queued
-  trades. Feed into `XTBClient.cancel_order()`.
-- **client**: Add `XTBClient.cancel_order(order_number)` hitting the gRPC
-  `DeleteOrders` endpoint. Returns a typed `CancelResult` with
-  `CancelOutcome` values `CANCELLED`, `REJECTED`, or `AMBIGUOUS`.
+- **api**: Re-export CancelResult and CancelOutcome from package root
+  ([`ab5713e`](https://github.com/liskeee/xtb-api-unofficial-python/commit/ab5713e3e6b6e8e49de60a942702ab9b9f6a2817))
 
-### Bug Fixes
+- **client**: Add XTBClient.cancel_order for queued-order cancellation
+  ([`df3be59`](https://github.com/liskeee/xtb-api-unofficial-python/commit/df3be59f312cd3f97d2c15cfdca1e79652104e76))
 
-- **client**: Market-closed orders are no longer silently reported as
-  `FILLED` when the broker has actually queued them.
+- **client**: Detect QUEUED market-closed orders via positions+orders probe
+  ([`f4f3199`](https://github.com/liskeee/xtb-api-unofficial-python/commit/f4f31990b856f906ffa3411afb4110049670c836))
+
+Before: grpc-status 0 was treated as FILLED even for market-closed orders that XTB had merely
+  queued, producing TradeResult(status=FILLED, price=None) — a silent misclassification.
+
+After: on gRPC success, probe get_positions() for a match (FILLED), then get_orders() keyed by
+  order_number (QUEUED), retrying once after 500 ms before settling on AMBIGUOUS with
+  error_code=FILL_STATE_UNKNOWN.
+
+- **grpc**: Add build_delete_orders_request for packed cancel wire
+  ([`683a983`](https://github.com/liskeee/xtb-api-unofficial-python/commit/683a983e00856a5dbc5135860f7d9c2c6cf46c9f))
+
+- **grpc**: Add cancel_orders hitting DeleteOrders with packed uint64
+  ([`ec955fc`](https://github.com/liskeee/xtb-api-unofficial-python/commit/ec955fc4b54f1defc9a6c2f5fe2454e60dab22fc))
+
+- **grpc**: Add GRPC_DELETE_ORDERS_ENDPOINT constant
+  ([`47b8317`](https://github.com/liskeee/xtb-api-unofficial-python/commit/47b83179b8dd1d9a8dfee90e428676a67e2f6966))
+
+- **grpc**: Add order_number on GrpcTradeResult and new GrpcCancelResult
+  ([`8de9c0d`](https://github.com/liskeee/xtb-api-unofficial-python/commit/8de9c0d633718f94a06e5ee0061a762f3071f1e9))
+
+- **grpc**: Add shared (UUID, order_number) response parser
+  ([`2bb6532`](https://github.com/liskeee/xtb-api-unofficial-python/commit/2bb65327cad7559daea820c597028f9b094a7265))
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+- **types**: Add TradeOutcome.QUEUED, order_number, CancelResult
+  ([`51a80b8`](https://github.com/liskeee/xtb-api-unofficial-python/commit/51a80b89eba11359d55c5737fa37b271636e5ef7))
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Refactoring
+
+- **client**: Tighten _classify_accepted_trade error tracking
+  ([`7922210`](https://github.com/liskeee/xtb-api-unofficial-python/commit/7922210514c14c4da8d4497ff08491f48f08300d))
+
+Two fixes from code review of the QUEUED-detection probe:
+
+- Remove the dead try/except around _find_matching_position; the helper already swallows WS
+  exceptions internally and returns None. - Record only the first probe error in last_exc so a
+  benign attempt-2 exception can't overwrite a more diagnostic attempt-1 one.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+- **grpc**: Extract order_number alongside order_id on trade success
+  ([`945e13d`](https://github.com/liskeee/xtb-api-unofficial-python/commit/945e13d6e5abe8c4d7d75fc09f740093c78153c7))
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Testing
+
+- Update regression suites for new QUEUED/AMBIGUOUS classification
+  ([`5264129`](https://github.com/liskeee/xtb-api-unofficial-python/commit/526412994b850de698aa6ffefce6ac5b1c4a2aca))
+
+Existing tests assumed grpc-success=True always yields FILLED; after the positions+orders probe they
+  needed updated stubs (get_orders AsyncMock, asyncio.sleep patch) and revised assertions reflecting
+  the new semantics:
+
+- test_client_fill_price: empty-position tests now expect AMBIGUOUS; retries test restructured so
+  classification finds the position first. - test_client_idempotent_retry: retry-success tests now
+  return matching positions so classification resolves FILLED correctly. - test_client.py:
+  _make_client gains get_orders stub; buy/sell/rbac tests set up matching positions for the classify
+  path. - test_client_volume_validation: fixture gains get_orders stub; fractional volume test
+  relaxed to check gRPC was called (not INSUFFICIENT_VOLUME).
 
 
 ## v0.8.0 (2026-04-21)
