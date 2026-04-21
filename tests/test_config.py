@@ -136,3 +136,60 @@ class TestResolveAccountServer:
         """Empty XTB_ACCOUNT_SERVER env is treated as unset."""
         monkeypatch.setenv("XTB_ACCOUNT_SERVER", "")
         assert resolve_account_server(None, "demo") == PRESETS["demo"]["account_server"]
+
+
+class TestXTBClientIntegration:
+    """End-to-end: XTBClient(account_type=...) wires resolved values through."""
+
+    def test_kwarg_demo_sets_account_server_and_ws_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("XTB_ACCOUNT_TYPE", raising=False)
+        monkeypatch.delenv("XTB_WS_URL", raising=False)
+        monkeypatch.delenv("XTB_ACCOUNT_SERVER", raising=False)
+
+        from xtb_api import XTBClient
+
+        client = XTBClient(
+            email="a@b.c",
+            password="pw",
+            account_number=12345678,
+            account_type="demo",
+        )
+
+        assert client._account_server == "XS-demo1"
+        assert client._ws._config.url == PRESETS["demo"]["ws_url"]
+
+    def test_env_demo_sets_account_server_and_ws_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XTB_ACCOUNT_TYPE", "demo")
+        monkeypatch.delenv("XTB_WS_URL", raising=False)
+        monkeypatch.delenv("XTB_ACCOUNT_SERVER", raising=False)
+
+        from xtb_api import XTBClient
+
+        client = XTBClient(
+            email="a@b.c",
+            password="pw",
+            account_number=12345678,
+        )
+
+        assert client._account_server == "XS-demo1"
+        assert client._ws._config.url == PRESETS["demo"]["ws_url"]
+
+    def test_default_is_real(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("XTB_ACCOUNT_TYPE", raising=False)
+        monkeypatch.delenv("XTB_WS_URL", raising=False)
+        monkeypatch.delenv("XTB_ACCOUNT_SERVER", raising=False)
+
+        from xtb_api import XTBClient
+
+        client = XTBClient(
+            email="a@b.c",
+            password="pw",
+            account_number=12345678,
+        )
+
+        assert client._account_server == "XS-real1"
+        assert client._ws._config.url == PRESETS["real"]["ws_url"]
