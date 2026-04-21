@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v0.10.0 (2026-04-21)
+
+### Features
+
+- **client**: Enhance order handling with order_id support
+  ([`a257be0`](https://github.com/liskeee/xtb-api-unofficial-python/commit/a257be0933307031ce1a34ed5377b88f3c2aee52))
+
+- Updated XTBClient methods to utilize order_id for disambiguation between identical positions,
+  improving accuracy in trade results. - Added new tests to verify behavior when order_ids are
+  present, ensuring that the correct position is matched and filled. - Implemented fallback logic
+  for cases where order_ids are not populated, maintaining legacy matching behavior.
+
+- **validate_live**: Enhance live trading validation and order handling
+  ([`21a11e6`](https://github.com/liskeee/xtb-api-unofficial-python/commit/21a11e6ae17eb2ab8c04d5899a7e7629cb2348e2))
+
+* Updated the validation script to support multiple symbols for live trading, allowing users to
+  specify a list of tickers. * Improved the handling of order outcomes, distinguishing between
+  FILLED and QUEUED statuses based on the presence of order numbers. * Added detailed logging for
+  order processing to clarify the classification of orders as QUEUED when no positions or pending
+  orders are found. * Refactored the client methods to streamline the decision-making process for
+  order outcomes, ensuring accurate reporting of trade results.
+
+
 ## v0.9.0 (2026-04-21)
 
 ### Code Style
