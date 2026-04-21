@@ -167,3 +167,22 @@ class TestXTBClientIntegration:
 
         assert client._account_server == "XS-real1"
         assert client._ws._config.url == PRESETS["real"]["ws_url"]
+
+    def test_demo_preset_with_ws_url_override_keeps_demo_account_server(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """account_type='demo' + explicit ws_url overrides only ws_url; account_server still resolves to XS-demo1."""
+        monkeypatch.delenv("XTB_ACCOUNT_TYPE", raising=False)
+        monkeypatch.delenv("XTB_WS_URL", raising=False)
+        monkeypatch.delenv("XTB_ACCOUNT_SERVER", raising=False)
+
+        from xtb_api import XTBClient
+
+        client = XTBClient(
+            email="a@b.c",
+            password="pw",
+            account_number=12345678,
+            account_type="demo",
+            ws_url="wss://staging.example.com/xstation",
+        )
+
+        assert client._ws._config.url == "wss://staging.example.com/xstation"
+        assert client._account_server == "XS-demo1"

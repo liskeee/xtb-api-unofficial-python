@@ -191,6 +191,10 @@ manually.
 
 Defaults to `real` when unset, matching previous versions.
 
+For non-standard endpoints or account servers, `XTB_WS_URL` and
+`XTB_ACCOUNT_SERVER` env vars override each field individually and win
+over the `account_type` preset — see `.env.example`.
+
 ### Advanced: Direct Access
 
 For advanced use cases, access the underlying clients:

@@ -9,7 +9,7 @@ client or touching the network.
 from __future__ import annotations
 
 import os
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
 AccountType = Literal["real", "demo"]
 
@@ -45,7 +45,7 @@ def resolve_account_type(explicit: AccountType | None) -> AccountType:
         return "real"
     if raw not in PRESETS:
         raise ValueError(f"Unknown account_type {raw!r}. Expected 'real' or 'demo'.")
-    return raw  # type: ignore[return-value]
+    return cast(AccountType, raw)
 
 
 def resolve_ws_url(explicit: str | None, account_type: AccountType) -> str:
