@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.7.2 (2026-04-21)
+
+### Bug Fixes
+
+- **auth**: Map CAS 404 to CAS_TGT_EXPIRED so AuthManager recovers automatically
+  ([`42588e3`](https://github.com/liskeee/xtb-api-unofficial-python/commit/42588e396f7c712b8ef6a8a6c434f2ae420da56e))
+
+XTB's CAS v1 service-ticket endpoint returns HTTP 404 ("TGT ... could not be found or is considered
+  invalid") when the Ticket-Granting Ticket has been rotated or forcibly logged out server-side —
+  not 401. Before this fix, only 401 was mapped to CAS_TGT_EXPIRED, so 404 fell through to the
+  generic CAS_SERVICE_TICKET_FAILED code which AuthManager.get_service_ticket does not catch. The
+  cached TGT never got invalidated, no fresh CAS login was attempted, and every subsequent request
+  kept hitting the dead TGT until the local 8h timestamp expired.
+
+Observed in prod: bot ran for hours with cached TGT "valid for 2h 44m" while every
+  portfolio.sync.get_positions call failed with the 404. Manual recovery required deleting the
+  session file and re-extracting via browser.
+
+Also mirrors the fix into the v2 endpoint for symmetry.
+
+
 ## v0.7.1 (2026-04-20)
 
 ### Bug Fixes
