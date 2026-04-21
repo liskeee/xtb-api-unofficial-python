@@ -163,9 +163,10 @@ await client.sell("CIG.PL", volume=100, options=TradeOptions(
 | `account_number` | Yes | — | XTB account number |
 | `totp_secret` | No | `""` | Base32 TOTP secret for auto 2FA |
 | `session_file` | No | `None` | Path to persist auth session |
-| `ws_url` | No | Real server | WebSocket endpoint URL |
+| `account_type` | No | `"real"` | `"real"` or `"demo"` — selects matching `ws_url` + `account_server` preset (see Demo vs Real) |
+| `ws_url` | No | resolved from `account_type` | WebSocket endpoint URL |
 | `endpoint` | No | `"meta1"` | Server endpoint name |
-| `account_server` | No | `"XS-real1"` | gRPC account server |
+| `account_server` | No | resolved from `account_type` | gRPC account server |
 | `auto_reconnect` | No | `True` | Auto-reconnect on disconnect |
 
 ### `InstrumentRegistry`
