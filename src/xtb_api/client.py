@@ -22,7 +22,16 @@ from xtb_api.exceptions import AmbiguousOutcomeError, InstrumentNotFoundError
 from xtb_api.grpc.client import GrpcClient
 from xtb_api.grpc.proto import SIDE_BUY, SIDE_SELL
 from xtb_api.types.instrument import InstrumentSearchResult, Quote
-from xtb_api.types.trading import AccountBalance, PendingOrder, Position, TradeOptions, TradeOutcome, TradeResult
+from xtb_api.types.trading import (
+    AccountBalance,
+    CancelOutcome,
+    CancelResult,
+    PendingOrder,
+    Position,
+    TradeOptions,
+    TradeOutcome,
+    TradeResult,
+)
 from xtb_api.types.websocket import WSClientConfig
 from xtb_api.utils import price_from_decimal
 from xtb_api.ws.ws_client import XTBWebSocketClient
@@ -235,6 +244,52 @@ class XTBClient:
             options: Advanced trade options (overrides stop_loss/take_profit)
         """
         return await self._execute_trade(symbol, volume, SIDE_SELL, stop_loss, take_profit, options)
+
+    async def cancel_order(self, order_number: int) -> CancelResult:
+        """Cancel a queued or pending broker order by its order number.
+
+        Pass the ``order_number`` from a ``TradeResult`` (populated on
+        both FILLED and QUEUED outcomes). Returns a typed
+        :class:`CancelResult` whose ``status`` is a :class:`CancelOutcome`.
+
+        ``CancelOutcome.REJECTED`` is a common and expected outcome — if
+        the order filled between the trade request and the cancel, the
+        broker has no queued order left to cancel.
+        """
+        grpc = self._ensure_grpc()
+        grpc_results = await grpc.cancel_orders([order_number])
+        grpc_result = grpc_results[0]
+
+        if grpc_result.success:
+            return CancelResult(
+                status=CancelOutcome.CANCELLED,
+                order_number=grpc_result.order_number,
+                cancellation_id=grpc_result.cancellation_id,
+            )
+
+        # Network failures leave grpc_status=0 (no trailer observed); broker
+        # rejections carry a non-zero grpc_status from the trailer.
+        if grpc_result.grpc_status == 0:
+            return CancelResult(
+                status=CancelOutcome.AMBIGUOUS,
+                order_number=grpc_result.order_number,
+                error=grpc_result.error,
+                error_code="AMBIGUOUS_NO_RESPONSE",
+            )
+
+        # Status 7 (PermissionDenied) is the only code observed from XTB so
+        # far (e.g. cancelling an unknown order number). Other non-zero codes
+        # fall through with error_code=None until we see them in the wild.
+        error_code: str | None = None
+        if grpc_result.grpc_status == 7:
+            error_code = "RBAC_DENIED"
+
+        return CancelResult(
+            status=CancelOutcome.REJECTED,
+            order_number=grpc_result.order_number,
+            error=grpc_result.error,
+            error_code=error_code,
+        )
 
     # ── Real-time Events ─────────────────────────────────────────
 
@@ -472,18 +527,21 @@ class XTBClient:
         side_str: Literal["buy", "sell"],
         volume: int,
     ) -> TradeResult:
-        """Map a GrpcTradeResult to a typed TradeResult."""
+        """Map a GrpcTradeResult to a typed TradeResult.
+
+        On gRPC success the wire is ambiguous (filled and queued orders return
+        an identical shape), so we probe the WS-side `get_positions()` and
+        `get_orders()` to classify the outcome. See spec §2.
+        """
+        order_number: int | None = getattr(grpc_result, "order_number", None)
+
         if grpc_result.success:
-            fill_price, fill_code = await self._poll_fill_price(symbol)
-            return TradeResult(
-                status=TradeOutcome.FILLED,
+            return await self._classify_accepted_trade(
                 symbol=symbol,
-                side=side_str,
-                volume=float(volume),
-                price=fill_price,
+                side_str=side_str,
+                volume=volume,
                 order_id=grpc_result.order_id,
-                error=None,
-                error_code=fill_code,
+                order_number=order_number,
             )
 
         # Non-success: categorize by grpc_status / error text.
@@ -502,8 +560,85 @@ class XTBClient:
             side=side_str,
             volume=float(volume),
             order_id=grpc_result.order_id,
+            order_number=order_number,
             error=err_text or None,
             error_code=error_code,
+        )
+
+    async def _classify_accepted_trade(
+        self,
+        *,
+        symbol: str,
+        side_str: Literal["buy", "sell"],
+        volume: int,
+        order_id: str | None,
+        order_number: int | None,
+    ) -> TradeResult:
+        """Decide FILLED vs QUEUED vs AMBIGUOUS after a gRPC-accepted order.
+
+        Probe 1: positions match by (symbol, side, volume) → FILLED.
+        Probe 2: pending orders match by order_id == str(order_number) → QUEUED.
+        Retry both probes once after 500 ms. Then AMBIGUOUS.
+        """
+        last_exc: str | None = None
+
+        for attempt in range(2):
+            if attempt == 1:
+                await asyncio.sleep(0.5)
+
+            # _find_matching_position is defensive and returns None on WS errors.
+            position = await self._find_matching_position(symbol, volume, side_str)
+
+            if position is not None:
+                fill_price, fill_code = await self._poll_fill_price(symbol)
+                return TradeResult(
+                    status=TradeOutcome.FILLED,
+                    symbol=symbol,
+                    side=side_str,
+                    volume=float(volume),
+                    price=fill_price,
+                    order_id=order_id,
+                    order_number=order_number,
+                    error=None,
+                    error_code=fill_code,
+                )
+
+            if order_number is not None:
+                try:
+                    orders = await self._ws.get_orders()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("get_orders probe failed: %s", exc)
+                    orders = []
+                    if last_exc is None:
+                        last_exc = str(exc)
+
+                target = str(order_number)
+                if any(o.order_id == target for o in orders):
+                    return TradeResult(
+                        status=TradeOutcome.QUEUED,
+                        symbol=symbol,
+                        side=side_str,
+                        volume=float(volume),
+                        order_id=order_id,
+                        order_number=order_number,
+                    )
+
+        err_msg = (
+            f"gRPC accepted order (order_id={order_id}, order_number={order_number}) "
+            "but neither a matching position nor a pending order was found"
+        )
+        if last_exc:
+            err_msg = f"{err_msg}; last probe error: {last_exc}"
+        logger.warning(err_msg)
+        return TradeResult(
+            status=TradeOutcome.AMBIGUOUS,
+            symbol=symbol,
+            side=side_str,
+            volume=float(volume),
+            order_id=order_id,
+            order_number=order_number,
+            error=err_msg,
+            error_code="FILL_STATE_UNKNOWN",
         )
 
     async def _find_matching_position(

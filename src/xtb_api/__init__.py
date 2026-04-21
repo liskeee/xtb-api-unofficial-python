@@ -33,6 +33,8 @@ from xtb_api.types.enums import (
 from xtb_api.types.instrument import InstrumentSearchResult, Quote
 from xtb_api.types.trading import (
     AccountBalance,
+    CancelOutcome,
+    CancelResult,
     PendingOrder,
     Position,
     TradeOptions,
@@ -71,6 +73,8 @@ __all__ = [
     "Position",
     "PendingOrder",
     "AccountBalance",
+    "CancelResult",
+    "CancelOutcome",
     "TradeResult",
     "TradeOutcome",
     "TradeOptions",

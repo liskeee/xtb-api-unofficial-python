@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## v0.8.0 (unreleased)
+
+### Features
+
+- **types**: Add `TradeOutcome.QUEUED` for market-order requests that XTB
+  accepts but does not immediately fill (typically: the instrument's market
+  is closed). Previously classified as `FILLED` with `price=None` — a silent
+  misclassification.
+- **types**: Populate `TradeResult.order_number` (integer broker order
+  number) from the gRPC `NewMarketOrder` response for both filled and queued
+  trades. Feed into `XTBClient.cancel_order()`.
+- **client**: Add `XTBClient.cancel_order(order_number)` hitting the gRPC
+  `DeleteOrders` endpoint. Returns a typed `CancelResult` with
+  `CancelOutcome` values `CANCELLED`, `REJECTED`, or `AMBIGUOUS`.
+
+### Bug Fixes
+
+- **client**: Market-closed orders are no longer silently reported as
+  `FILLED` when the broker has actually queued them.
+
 
 ## v0.8.0 (2026-04-21)
 

@@ -14,7 +14,6 @@ from __future__ import annotations
 import base64
 import contextlib
 import logging
-import re
 import time
 from typing import TYPE_CHECKING
 
@@ -29,16 +28,20 @@ from xtb_api.exceptions import (
 )
 from xtb_api.grpc.proto import (
     GRPC_AUTH_ENDPOINT,
+    GRPC_DELETE_ORDERS_ENDPOINT,
     GRPC_NEW_ORDER_ENDPOINT,
     GRPC_WEB_TEXT_CONTENT_TYPE,
     SIDE_BUY,
     SIDE_SELL,
     build_create_access_token_request,
+    build_delete_orders_request,
     build_grpc_web_text_body,
     build_new_market_order,
     extract_jwt,
+    parse_delete_orders_response,
+    parse_new_market_order_response,
 )
-from xtb_api.grpc.types import GrpcTradeResult
+from xtb_api.grpc.types import GrpcCancelResult, GrpcTradeResult
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +275,102 @@ class GrpcClient:
 
         return self._parse_trade_response(response_bytes)
 
+    async def cancel_orders(self, order_numbers: list[int]) -> list[GrpcCancelResult]:
+        """Cancel one or more broker orders via DeleteOrders gRPC.
+
+        Input order numbers are sent as a packed repeated uint64 in a single
+        wire call. Returns one ``GrpcCancelResult`` per input order number,
+        in input order. On network failure every order reports the same
+        underlying error string.
+
+        Duplicate order numbers in the input list produce undefined
+        per-row results: the server returns one acknowledgement per unique
+        order_number and duplicates in the input get their cancellation_id
+        copied from the first occurrence. Callers should pass unique order
+        numbers.
+        """
+        jwt = await self._ensure_jwt()
+        logger.info("gRPC cancel: order_numbers=%s", order_numbers)
+
+        proto_msg = build_delete_orders_request(order_numbers)
+        body_b64 = build_grpc_web_text_body(proto_msg)
+
+        try:
+            response_bytes = await self._grpc_call(GRPC_DELETE_ORDERS_ENDPOINT, body_b64, jwt=jwt)
+        except httpx.HTTPError as e:
+            logger.warning("gRPC cancel network error: %s", e, exc_info=True)
+            return [GrpcCancelResult(success=False, order_number=n, error=str(e)) for n in order_numbers]
+
+        return self._parse_cancel_response(response_bytes, order_numbers)
+
+    def _parse_cancel_response(self, response_bytes: bytes, order_numbers: list[int]) -> list[GrpcCancelResult]:
+        """Parse a DeleteOrders response into one result per requested order.
+
+        The wire carries one data frame per cancelled order plus one trailer
+        frame. A non-zero grpc-status in the trailer applies to every
+        requested order (broker-level rejection). An unpaired data frame
+        (e.g. partial success) propagates fields from the frame's UUID+number
+        onto the matching input order; any unmatched input orders get a
+        ``grpc_status``-based failure result.
+        """
+        import struct
+
+        grpc_status: int | None = None
+        grpc_message: str | None = None
+        data_frames: list[bytes] = []
+
+        pos = 0
+        while pos + 5 <= len(response_bytes):
+            flag = response_bytes[pos]
+            length = struct.unpack(">I", response_bytes[pos + 1 : pos + 5])[0]
+            pos += 5
+            if pos + length > len(response_bytes):
+                break
+            frame_data = response_bytes[pos : pos + length]
+            pos += length
+
+            if flag & 0x80:
+                trailer_text = frame_data.decode("latin-1", errors="replace")
+                for line in trailer_text.split("\r\n"):
+                    if line.startswith("grpc-status:"):
+                        with contextlib.suppress(ValueError):
+                            grpc_status = int(line.split(":", 1)[1].strip())
+                    elif line.startswith("grpc-message:"):
+                        grpc_message = line.split(":", 1)[1].strip()
+            else:
+                data_frames.append(frame_data)
+
+        # Build a lookup of parsed data frames by order_number
+        parsed: dict[int, str | None] = {}
+        for frame in data_frames:
+            cancellation_id, order_number = parse_delete_orders_response(frame)
+            if order_number is not None:
+                parsed[order_number] = cancellation_id
+
+        status = grpc_status if grpc_status is not None else 0
+        results: list[GrpcCancelResult] = []
+        for n in order_numbers:
+            if status == 0 and n in parsed:
+                results.append(
+                    GrpcCancelResult(
+                        success=True,
+                        order_number=n,
+                        cancellation_id=parsed[n],
+                        grpc_status=0,
+                    )
+                )
+            else:
+                error_msg = grpc_message or f"gRPC cancel failed (status={status})"
+                results.append(
+                    GrpcCancelResult(
+                        success=False,
+                        order_number=n,
+                        grpc_status=status,
+                        error=error_msg,
+                    )
+                )
+        return results
+
     def _parse_trade_response(self, response_bytes: bytes) -> GrpcTradeResult:
         """Parse gRPC-web trade response into GrpcTradeResult.
 
@@ -311,14 +410,14 @@ class GrpcClient:
 
         # Success requires explicit grpc-status 0 from trailer
         if grpc_status == 0:
-            response_text = data_payload.decode("latin-1", errors="replace")
-            uuid_match = re.search(
-                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-                response_text,
-            )
-            order_id = uuid_match.group(0) if uuid_match else None
+            order_id, order_number = parse_new_market_order_response(data_payload)
             logger.info("Trade executed successfully via gRPC")
-            return GrpcTradeResult(success=True, order_id=order_id, grpc_status=0)
+            return GrpcTradeResult(
+                success=True,
+                order_id=order_id,
+                order_number=order_number,
+                grpc_status=0,
+            )
 
         # Error cases
         status = grpc_status if grpc_status is not None else 0

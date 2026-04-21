@@ -134,6 +134,30 @@ await client.sell("CIG.PL", volume=100, options=TradeOptions(
 ))
 ```
 
+### Queued orders (market closed)
+
+When the instrument's market is closed, XTB accepts the order and queues
+it until market open. The library surfaces this as `TradeOutcome.QUEUED`
+rather than lying about a fill:
+
+```python
+result = await client.buy("AAPL.US", volume=1)
+
+match result.status:
+    case TradeOutcome.FILLED:
+        print(f"Filled at {result.price}")
+    case TradeOutcome.QUEUED:
+        print(f"Queued {result.order_number}; cancelling...")
+        cancel = await client.cancel_order(result.order_number)
+        print(f"Cancel status: {cancel.status}")
+    case _:
+        print(f"Trade failed: {result.status} — {result.error}")
+```
+
+`TradeResult.order_number` is populated for both `FILLED` and `QUEUED`
+outcomes. `cancel_order()` returns a typed `CancelResult` with
+`CancelOutcome` values (`CANCELLED`, `REJECTED`, `AMBIGUOUS`).
+
 > `TradeResult.price` is populated by polling open positions immediately after fill. If the position cannot be located within the poll window, `price` remains `None`.
 
 ## API Reference
@@ -151,6 +175,7 @@ await client.sell("CIG.PL", volume=100, options=TradeOptions(
 | `search_instrument(query)` | `list[InstrumentSearchResult]` | Search instruments |
 | `buy(symbol, volume, ...)` | `TradeResult` | Execute BUY order |
 | `sell(symbol, volume, ...)` | `TradeResult` | Execute SELL order |
+| `cancel_order(order_number)` | `CancelResult` | Cancel a queued/pending order by its order number |
 | `on(event, callback)` | `None` | Register event handler |
 | `subscribe_ticks(symbol)` | `None` | Subscribe to real-time ticks |
 

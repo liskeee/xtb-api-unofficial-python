@@ -15,6 +15,8 @@ def _classify(result: TradeResult) -> str:
     match result.status:
         case TradeOutcome.FILLED:
             return f"filled:{result.order_id}"
+        case TradeOutcome.QUEUED:
+            return f"queued:{result.order_number}"
         case TradeOutcome.INSUFFICIENT_VOLUME:
             return "skipped:volume-too-small"
         case TradeOutcome.AMBIGUOUS:
