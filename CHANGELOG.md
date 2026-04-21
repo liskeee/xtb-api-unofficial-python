@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.8.0 (2026-04-21)
+
+### Added
+
+- `XTB_ACCOUNT_TYPE` environment variable and `account_type` kwarg on
+  `XTBClient` to select demo or real XTB environment. Library resolves
+  `ws_url` and `account_server` as a pair, so demo users no longer have
+  to remember both overrides. `XTB_WS_URL` and new `XTB_ACCOUNT_SERVER`
+  are kept as per-field escape hatches.
+
+
 ## v0.7.2 (2026-04-21)
 
 ### Bug Fixes
