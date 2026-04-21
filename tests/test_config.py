@@ -15,9 +15,7 @@ from xtb_api.config import (
 class TestResolveAccountType:
     """Happy paths + precedence + normalization + error cases."""
 
-    def test_default_is_real_when_no_kwarg_and_no_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_default_is_real_when_no_kwarg_and_no_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With neither kwarg nor env var set, default to 'real'."""
         monkeypatch.delenv("XTB_ACCOUNT_TYPE", raising=False)
         assert resolve_account_type(None) == "real"
@@ -37,31 +35,23 @@ class TestResolveAccountType:
         monkeypatch.setenv("XTB_ACCOUNT_TYPE", "demo")
         assert resolve_account_type("real") == "real"
 
-    def test_env_var_caps_and_whitespace_normalized(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_var_caps_and_whitespace_normalized(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """'DEMO ' (upper + trailing space) resolves to 'demo'."""
         monkeypatch.setenv("XTB_ACCOUNT_TYPE", "DEMO ")
         assert resolve_account_type(None) == "demo"
 
-    def test_empty_env_var_falls_back_to_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_env_var_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Empty string env var is treated the same as unset."""
         monkeypatch.setenv("XTB_ACCOUNT_TYPE", "")
         assert resolve_account_type(None) == "real"
 
-    def test_unknown_env_value_raises(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_unknown_env_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A typo in XTB_ACCOUNT_TYPE raises ValueError naming the value."""
         monkeypatch.setenv("XTB_ACCOUNT_TYPE", "demp")
         with pytest.raises(ValueError, match="demp"):
             resolve_account_type(None)
 
-    def test_unknown_kwarg_value_raises(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_unknown_kwarg_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A typo in the kwarg raises the same ValueError."""
         monkeypatch.delenv("XTB_ACCOUNT_TYPE", raising=False)
         with pytest.raises(ValueError, match="bogus"):
@@ -71,16 +61,12 @@ class TestResolveAccountType:
 class TestResolveWsUrl:
     """ws_url resolves via kwarg → XTB_WS_URL env → preset."""
 
-    def test_preset_used_when_nothing_set(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_preset_used_when_nothing_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With no kwarg and no env, fall back to the preset for the given type."""
         monkeypatch.delenv("XTB_WS_URL", raising=False)
         assert resolve_ws_url(None, "demo") == PRESETS["demo"]["ws_url"]
 
-    def test_real_preset_used_when_nothing_set(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_real_preset_used_when_nothing_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Same fallback for the real account type."""
         monkeypatch.delenv("XTB_WS_URL", raising=False)
         assert resolve_ws_url(None, "real") == PRESETS["real"]["ws_url"]
@@ -95,9 +81,7 @@ class TestResolveWsUrl:
         monkeypatch.setenv("XTB_WS_URL", "wss://staging.example.com/ws")
         assert resolve_ws_url("wss://custom/", "demo") == "wss://custom/"
 
-    def test_empty_env_falls_back_to_preset(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_env_falls_back_to_preset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Empty XTB_WS_URL env is treated as unset."""
         monkeypatch.setenv("XTB_WS_URL", "")
         assert resolve_ws_url(None, "demo") == PRESETS["demo"]["ws_url"]
@@ -106,16 +90,12 @@ class TestResolveWsUrl:
 class TestResolveAccountServer:
     """account_server resolves via kwarg → XTB_ACCOUNT_SERVER env → preset."""
 
-    def test_preset_used_when_nothing_set(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_preset_used_when_nothing_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With no kwarg and no env, fall back to the preset."""
         monkeypatch.delenv("XTB_ACCOUNT_SERVER", raising=False)
         assert resolve_account_server(None, "demo") == PRESETS["demo"]["account_server"]
 
-    def test_real_preset_used_when_nothing_set(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_real_preset_used_when_nothing_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Same fallback for the real account type."""
         monkeypatch.delenv("XTB_ACCOUNT_SERVER", raising=False)
         assert resolve_account_server(None, "real") == PRESETS["real"]["account_server"]
@@ -130,9 +110,7 @@ class TestResolveAccountServer:
         monkeypatch.setenv("XTB_ACCOUNT_SERVER", "XS-real2")
         assert resolve_account_server("XS-custom", "demo") == "XS-custom"
 
-    def test_empty_env_falls_back_to_preset(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_env_falls_back_to_preset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Empty XTB_ACCOUNT_SERVER env is treated as unset."""
         monkeypatch.setenv("XTB_ACCOUNT_SERVER", "")
         assert resolve_account_server(None, "demo") == PRESETS["demo"]["account_server"]
@@ -141,9 +119,7 @@ class TestResolveAccountServer:
 class TestXTBClientIntegration:
     """End-to-end: XTBClient(account_type=...) wires resolved values through."""
 
-    def test_kwarg_demo_sets_account_server_and_ws_url(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_kwarg_demo_sets_account_server_and_ws_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("XTB_ACCOUNT_TYPE", raising=False)
         monkeypatch.delenv("XTB_WS_URL", raising=False)
         monkeypatch.delenv("XTB_ACCOUNT_SERVER", raising=False)
@@ -160,9 +136,7 @@ class TestXTBClientIntegration:
         assert client._account_server == "XS-demo1"
         assert client._ws._config.url == PRESETS["demo"]["ws_url"]
 
-    def test_env_demo_sets_account_server_and_ws_url(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_demo_sets_account_server_and_ws_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("XTB_ACCOUNT_TYPE", "demo")
         monkeypatch.delenv("XTB_WS_URL", raising=False)
         monkeypatch.delenv("XTB_ACCOUNT_SERVER", raising=False)

@@ -44,9 +44,7 @@ def resolve_account_type(explicit: AccountType | None) -> AccountType:
     if not raw:
         return "real"
     if raw not in PRESETS:
-        raise ValueError(
-            f"Unknown account_type {raw!r}. Expected 'real' or 'demo'."
-        )
+        raise ValueError(f"Unknown account_type {raw!r}. Expected 'real' or 'demo'.")
     return raw  # type: ignore[return-value]
 
 
