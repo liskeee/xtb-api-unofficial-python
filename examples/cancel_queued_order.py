@@ -5,14 +5,13 @@ XTBClient.cancel_order). The classic trigger is placing a BUY on a US
 stock outside NASDAQ hours from a non-US timezone — XTB accepts the
 order but parks it until market open.
 
-WARNING: this example places a real order. Set XTB_WS_URL to the demo
-endpoint (wss://api5demoa.x-station.eu/v1/xstation) unless you
-deliberately want a live order on the real account.
+WARNING: this example places a real order. Set XTB_ACCOUNT_TYPE=demo
+in your environment unless you deliberately want a live order.
 
 Run with::
 
     export XTB_EXAMPLE_TRADE=1
-    export XTB_WS_URL=wss://api5demoa.x-station.eu/v1/xstation
+    export XTB_ACCOUNT_TYPE=demo
     python examples/cancel_queued_order.py
 """
 
@@ -39,7 +38,6 @@ async def main() -> int:
         password=os.environ["XTB_PASSWORD"],
         account_number=int(os.environ["XTB_ACCOUNT_NUMBER"]),
         totp_secret=os.environ.get("XTB_TOTP_SECRET", ""),
-        ws_url=os.environ.get("XTB_WS_URL", "wss://api5reala.x-station.eu/v1/xstation"),
         session_file=Path.home() / ".xtb_session",
     )
 

@@ -587,10 +587,10 @@ class XTBClient:
                 await asyncio.sleep(0.5)
 
             # _find_matching_position is defensive and returns None on WS errors.
-            position = await self._find_matching_position(symbol, volume, side_str)
+            position = await self._find_matching_position(symbol, volume, side_str, order_id=order_id)
 
             if position is not None:
-                fill_price, fill_code = await self._poll_fill_price(symbol)
+                fill_price, fill_code = await self._poll_fill_price(symbol, order_id=order_id)
                 return TradeResult(
                     status=TradeOutcome.FILLED,
                     symbol=symbol,
@@ -612,8 +612,7 @@ class XTBClient:
                     if last_exc is None:
                         last_exc = str(exc)
 
-                target = str(order_number)
-                if any(o.order_id == target for o in orders):
+                if any(_order_matches_number(o.order_id, order_number) for o in orders):
                     return TradeResult(
                         status=TradeOutcome.QUEUED,
                         symbol=symbol,
@@ -642,19 +641,33 @@ class XTBClient:
         )
 
     async def _find_matching_position(
-        self, symbol: str, volume: int, side_str: Literal["buy", "sell"]
+        self,
+        symbol: str,
+        volume: int,
+        side_str: Literal["buy", "sell"],
+        *,
+        order_id: str | None = None,
     ) -> Position | None:
         """Find a live position that plausibly corresponds to a just-sent trade.
 
-        Matching is best-effort: symbol (case-insensitive) + side + volume.
-        A match means the first submission landed despite the RBAC error —
-        caller must return FILLED instead of retrying.
+        When ``order_id`` is known and the WS snapshot populates order_ids,
+        the match is by exact order_id (disambiguates against a pre-existing
+        identical position). Falls back to (symbol, side, volume) matching
+        either when no ``order_id`` was provided (RBAC-retry idempotency
+        probe) or when the WS snapshot has no order_ids populated yet.
         """
         try:
             positions = await self._ws.get_positions()
         except Exception as exc:
             logger.warning("Idempotency probe failed (get_positions): %s", exc)
             return None
+
+        decided, match = _lookup_by_order_id(positions, order_id)
+        if decided:
+            # order_ids are populated; trust the id-based decision and do
+            # NOT fall back to heuristic matching (would pick up a
+            # pre-existing identical position).
+            return match
 
         target = symbol.upper()
         for p in positions:
@@ -663,9 +676,18 @@ class XTBClient:
         return None
 
     async def _poll_fill_price(
-        self, symbol: str, attempts: int = 3, delay_sec: float = 1.0
+        self,
+        symbol: str,
+        attempts: int = 3,
+        delay_sec: float = 1.0,
+        *,
+        order_id: str | None = None,
     ) -> tuple[float | None, str | None]:
         """Poll positions after a successful trade to determine the fill price.
+
+        When ``order_id`` is provided and the snapshot populates order_ids,
+        match by order_id to avoid reading the price of a pre-existing
+        identical position. Otherwise fall back to the first symbol match.
 
         Returns ``(price, error_code)``. ``error_code`` is None when the
         price was observed, ``"FILL_PRICE_UNKNOWN"`` when the position did
@@ -676,9 +698,14 @@ class XTBClient:
         for i in range(attempts):
             try:
                 positions = await self._ws.get_positions()
-                for p in positions:
-                    if p.symbol.upper() == target:
-                        return p.open_price, None
+                decided, match = _lookup_by_order_id(positions, order_id)
+                if decided:
+                    if match is not None:
+                        return match.open_price, None
+                else:
+                    for p in positions:
+                        if p.symbol.upper() == target:
+                            return p.open_price, None
             except Exception as exc:
                 logger.warning("Fill-price poll attempt %d/%d failed: %s", i + 1, attempts, exc)
             if i < attempts - 1:
@@ -689,6 +716,43 @@ class XTBClient:
             attempts,
         )
         return None, "FILL_PRICE_UNKNOWN"
+
+
+def _lookup_by_order_id(positions: list[Position], order_id: str | None) -> tuple[bool, Position | None]:
+    """Resolve a position by order_id when id-based lookup is meaningful.
+
+    Returns ``(decided, match)``:
+
+    - ``decided=True``  — an id-based lookup was performed. ``match`` is
+      the hit or ``None`` if no id matched; caller MUST respect the
+      decision (do not fall back to heuristic matching).
+    - ``decided=False`` — id-based lookup was not meaningful (no
+      ``order_id`` given, or no position in the snapshot has any
+      ``order_id`` populated). Caller should use its own fallback.
+    """
+    if order_id is None or not any(p.order_id is not None for p in positions):
+        return False, None
+    for p in positions:
+        if p.order_id == order_id:
+            return True, p
+    return True, None
+
+
+def _order_matches_number(order_id: str | None, order_number: int) -> bool:
+    """True if a PendingOrder.order_id refers to the given broker order_number.
+
+    Accepts the empirically-observed ``str(order_number)`` form and also
+    matches when ``order_id`` parses as an integer equal to ``order_number``
+    (tolerates leading-zero / int-like drift in the wire format).
+    """
+    if order_id is None:
+        return False
+    if order_id == str(order_number):
+        return True
+    try:
+        return int(order_id) == order_number
+    except ValueError:
+        return False
 
 
 def _decimal_places(value: float, max_scale: int = 5) -> int:
