@@ -460,18 +460,21 @@ class XTBClient:
         side_str: Literal["buy", "sell"],
         volume: int,
     ) -> TradeResult:
-        """Map a GrpcTradeResult to a typed TradeResult."""
+        """Map a GrpcTradeResult to a typed TradeResult.
+
+        On gRPC success the wire is ambiguous (filled and queued orders return
+        an identical shape), so we probe the WS-side `get_positions()` and
+        `get_orders()` to classify the outcome. See spec §2.
+        """
+        order_number: int | None = getattr(grpc_result, "order_number", None)
+
         if grpc_result.success:
-            fill_price, fill_code = await self._poll_fill_price(symbol)
-            return TradeResult(
-                status=TradeOutcome.FILLED,
+            return await self._classify_accepted_trade(
                 symbol=symbol,
-                side=side_str,
-                volume=float(volume),
-                price=fill_price,
+                side_str=side_str,
+                volume=volume,
                 order_id=grpc_result.order_id,
-                error=None,
-                error_code=fill_code,
+                order_number=order_number,
             )
 
         # Non-success: categorize by grpc_status / error text.
@@ -490,8 +493,88 @@ class XTBClient:
             side=side_str,
             volume=float(volume),
             order_id=grpc_result.order_id,
+            order_number=order_number,
             error=err_text or None,
             error_code=error_code,
+        )
+
+    async def _classify_accepted_trade(
+        self,
+        *,
+        symbol: str,
+        side_str: Literal["buy", "sell"],
+        volume: int,
+        order_id: str | None,
+        order_number: int | None,
+    ) -> TradeResult:
+        """Decide FILLED vs QUEUED vs AMBIGUOUS after a gRPC-accepted order.
+
+        Probe 1: positions match by (symbol, side, volume) → FILLED.
+        Probe 2: pending orders match by order_id == str(order_number) → QUEUED.
+        Retry both probes once after 500 ms. Then AMBIGUOUS.
+        """
+        last_exc: str | None = None
+
+        for attempt in range(2):
+            if attempt == 1:
+                await asyncio.sleep(0.5)
+
+            try:
+                position = await self._find_matching_position(symbol, volume, side_str)
+            except Exception as exc:  # noqa: BLE001 — broad by design; we fall through
+                logger.warning("get_positions probe failed: %s", exc)
+                position = None
+                last_exc = str(exc)
+
+            if position is not None:
+                fill_price, fill_code = await self._poll_fill_price(symbol)
+                return TradeResult(
+                    status=TradeOutcome.FILLED,
+                    symbol=symbol,
+                    side=side_str,
+                    volume=float(volume),
+                    price=fill_price,
+                    order_id=order_id,
+                    order_number=order_number,
+                    error=None,
+                    error_code=fill_code,
+                )
+
+            if order_number is not None:
+                try:
+                    orders = await self._ws.get_orders()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("get_orders probe failed: %s", exc)
+                    orders = []
+                    last_exc = str(exc)
+
+                target = str(order_number)
+                if any(o.order_id == target for o in orders):
+                    return TradeResult(
+                        status=TradeOutcome.QUEUED,
+                        symbol=symbol,
+                        side=side_str,
+                        volume=float(volume),
+                        order_id=order_id,
+                        order_number=order_number,
+                    )
+
+        err_msg = (
+            f"gRPC accepted order (order_id={order_id}, order_number={order_number}) "
+            "but neither a matching position nor a pending order was found"
+        )
+        if last_exc:
+            err_msg = f"{err_msg}; last probe error: {last_exc}"
+        logger.warning(err_msg)
+        return TradeResult(
+            status=TradeOutcome.AMBIGUOUS,
+            symbol=symbol,
+            side=side_str,
+            volume=float(volume),
+            order_id=order_id,
+            order_number=order_number,
+            error=err_msg,
+            error_code="FILL_STATE_UNKNOWN",
         )
 
     async def _find_matching_position(
