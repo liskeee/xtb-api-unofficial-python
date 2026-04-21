@@ -180,12 +180,15 @@ Persistent symbol → instrument-ID cache, stored as JSON.
 | `populate(client, symbols)` | `dict[str, int]` | Download the full symbol list via `client`, match requested `symbols` (case-insensitive, dot-less fallback), persist, return new matches |
 | `ids` | `dict[str, int]` | Read-only copy of the full cache |
 
-### WebSocket URLs
+### Demo vs Real
 
-| Environment | URL |
-|-------------|-----|
-| Real | `wss://api5reala.x-station.eu/v1/xstation` (default) |
-| Demo | `wss://api5demoa.x-station.eu/v1/xstation` |
+Set `XTB_ACCOUNT_TYPE=demo` in your environment (or pass
+`account_type="demo"` to `XTBClient`) to connect to XTB's paper-trading
+environment instead of live. The library picks the correct WebSocket
+endpoint and account server as a pair — you never need to set both
+manually.
+
+Defaults to `real` when unset, matching previous versions.
 
 ### Advanced: Direct Access
 
