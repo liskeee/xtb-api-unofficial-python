@@ -576,9 +576,16 @@ class XTBClient:
     ) -> TradeResult:
         """Decide FILLED vs QUEUED vs AMBIGUOUS after a gRPC-accepted order.
 
-        Probe 1: positions match by (symbol, side, volume) → FILLED.
-        Probe 2: pending orders match by order_id == str(order_number) → QUEUED.
-        Retry both probes once after 500 ms. Then AMBIGUOUS.
+        Probe 1: positions match by order_id / (symbol, side, volume) → FILLED.
+        Probe 2: pending orders match by order_number → QUEUED.
+        Retry both probes once after 500 ms.
+
+        If both probes ran cleanly but surfaced nothing and we have an
+        ``order_number``, classify as QUEUED: gRPC success plus an
+        order_number is XTB's receipt that it holds the order, and
+        ``getAllOrders`` does not surface queued market-closed orders in
+        practice. AMBIGUOUS is reserved for the case where a probe
+        actually raised and we genuinely cannot tell.
         """
         last_exc: str | None = None
 
@@ -586,22 +593,29 @@ class XTBClient:
             if attempt == 1:
                 await asyncio.sleep(0.5)
 
-            # _find_matching_position is defensive and returns None on WS errors.
-            position = await self._find_matching_position(symbol, volume, side_str, order_id=order_id)
+            try:
+                positions = await self._ws.get_positions()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("get_positions probe failed: %s", exc)
+                positions = None
+                if last_exc is None:
+                    last_exc = str(exc)
 
-            if position is not None:
-                fill_price, fill_code = await self._poll_fill_price(symbol, order_id=order_id)
-                return TradeResult(
-                    status=TradeOutcome.FILLED,
-                    symbol=symbol,
-                    side=side_str,
-                    volume=float(volume),
-                    price=fill_price,
-                    order_id=order_id,
-                    order_number=order_number,
-                    error=None,
-                    error_code=fill_code,
-                )
+            if positions is not None:
+                position = _match_position(positions, symbol, volume, side_str, order_id=order_id)
+                if position is not None:
+                    fill_price, fill_code = await self._poll_fill_price(symbol, order_id=order_id)
+                    return TradeResult(
+                        status=TradeOutcome.FILLED,
+                        symbol=symbol,
+                        side=side_str,
+                        volume=float(volume),
+                        price=fill_price,
+                        order_id=order_id,
+                        order_number=order_number,
+                        error=None,
+                        error_code=fill_code,
+                    )
 
             if order_number is not None:
                 try:
@@ -621,6 +635,21 @@ class XTBClient:
                         order_id=order_id,
                         order_number=order_number,
                     )
+
+        if last_exc is None and order_number is not None:
+            logger.info(
+                "gRPC accepted order_number=%s but probes returned empty; "
+                "classifying as QUEUED (getAllOrders does not list queued market orders)",
+                order_number,
+            )
+            return TradeResult(
+                status=TradeOutcome.QUEUED,
+                symbol=symbol,
+                side=side_str,
+                volume=float(volume),
+                order_id=order_id,
+                order_number=order_number,
+            )
 
         err_msg = (
             f"gRPC accepted order (order_id={order_id}, order_number={order_number}) "
@@ -661,19 +690,7 @@ class XTBClient:
         except Exception as exc:
             logger.warning("Idempotency probe failed (get_positions): %s", exc)
             return None
-
-        decided, match = _lookup_by_order_id(positions, order_id)
-        if decided:
-            # order_ids are populated; trust the id-based decision and do
-            # NOT fall back to heuristic matching (would pick up a
-            # pre-existing identical position).
-            return match
-
-        target = symbol.upper()
-        for p in positions:
-            if p.symbol.upper() == target and p.side == side_str and abs(p.volume - float(volume)) < 1e-9:
-                return p
-        return None
+        return _match_position(positions, symbol, volume, side_str, order_id=order_id)
 
     async def _poll_fill_price(
         self,
@@ -716,6 +733,25 @@ class XTBClient:
             attempts,
         )
         return None, "FILL_PRICE_UNKNOWN"
+
+
+def _match_position(
+    positions: list[Position],
+    symbol: str,
+    volume: int,
+    side_str: Literal["buy", "sell"],
+    *,
+    order_id: str | None = None,
+) -> Position | None:
+    """Match a position from a snapshot. Prefer order_id; fall back to (symbol, side, volume)."""
+    decided, match = _lookup_by_order_id(positions, order_id)
+    if decided:
+        return match
+    target = symbol.upper()
+    for p in positions:
+        if p.symbol.upper() == target and p.side == side_str and abs(p.volume - float(volume)) < 1e-9:
+            return p
+    return None
 
 
 def _lookup_by_order_id(positions: list[Position], order_id: str | None) -> tuple[bool, Position | None]:

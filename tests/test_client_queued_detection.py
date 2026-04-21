@@ -98,9 +98,14 @@ async def test_queued_order_matched_by_pending_orders(
 
 
 @pytest.mark.asyncio
-async def test_neither_position_nor_order_is_ambiguous(
+async def test_neither_position_nor_order_falls_back_to_queued(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Probes ran cleanly but found nothing → QUEUED.
+
+    ``getAllOrders`` does not surface queued market-closed orders in
+    practice, so a gRPC success plus an ``order_number`` plus clean-but-
+    empty probes is XTB's own receipt that the order is queued."""
     client = _make_client(monkeypatch)
     client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
         return_value=MagicMock(
@@ -116,11 +121,39 @@ async def test_neither_position_nor_order_is_ambiguous(
 
     result = await client.buy("AAPL.US", volume=1)
 
-    assert result.status is TradeOutcome.AMBIGUOUS
-    assert result.error_code == "FILL_STATE_UNKNOWN"
-    # The probe must retry once (second pass after the 500 ms sleep).
+    assert result.status is TradeOutcome.QUEUED
+    assert result.order_number == 999
+    assert result.order_id == "UUID-3"
+    assert result.error_code is None
+    assert result.error is None
+    # The probe must still retry once before committing to the QUEUED fallback.
     assert client._ws.get_positions.await_count == 2
     assert client._ws.get_orders.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_queued_fallback_requires_order_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without an ``order_number`` we have no server-side receipt to trust,
+    so clean-but-empty probes stay AMBIGUOUS."""
+    client = _make_client(monkeypatch)
+    client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
+        return_value=MagicMock(
+            success=True,
+            order_id="UUID-NO-NUM",
+            order_number=None,
+            error=None,
+            grpc_status=0,
+        )
+    )
+    client._ws.get_positions = AsyncMock(return_value=[])
+    client._ws.get_orders = AsyncMock(return_value=[])
+
+    result = await client.buy("AAPL.US", volume=1)
+
+    assert result.status is TradeOutcome.AMBIGUOUS
+    assert result.error_code == "FILL_STATE_UNKNOWN"
 
 
 @pytest.mark.asyncio
@@ -201,7 +234,8 @@ async def test_order_id_mismatch_does_not_fall_back_when_ids_populated(
 ) -> None:
     """If the WS snapshot has order_ids but ours isn't among them, the
     classifier must NOT fall back to symbol+side+volume matching against
-    a pre-existing identical position."""
+    a pre-existing identical position. With a valid order_number and
+    clean-but-unmatching probes, the result is QUEUED (XTB's receipt)."""
     client = _make_client(monkeypatch)
     client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
         return_value=MagicMock(
@@ -225,8 +259,9 @@ async def test_order_id_mismatch_does_not_fall_back_when_ids_populated(
 
     result = await client.buy("CIG.PL", volume=1)
 
-    assert result.status is TradeOutcome.AMBIGUOUS
+    assert result.status is TradeOutcome.QUEUED
     assert result.order_id == "UUID-NEW"
+    assert result.order_number == 555
     # Both attempts must have consulted get_orders too — the classifier
     # didn't silently fall back to heuristic position matching.
     assert client._ws.get_positions.await_count == 2

@@ -68,10 +68,11 @@ async def test_fill_price_retries_three_times(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.mark.asyncio
 async def test_fill_price_none_when_position_never_appears(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When no position or pending order appears, outcome is AMBIGUOUS (not FILLED)."""
+    """Without an order_number we have no server-side receipt, so empty
+    probes stay AMBIGUOUS (not FILLED)."""
     client = _make_client(monkeypatch)
     client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
-        return_value=MagicMock(success=True, order_id="O1", error=None)
+        return_value=MagicMock(success=True, order_id="O1", order_number=None, error=None)
     )
     client._ws.get_positions = AsyncMock(return_value=[])  # always empty
 
@@ -100,10 +101,10 @@ async def test_failed_trade_does_not_poll_positions(monkeypatch: pytest.MonkeyPa
 async def test_fill_price_unknown_sets_error_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When neither position nor pending order appears, outcome is AMBIGUOUS with error code."""
+    """Without an order_number, empty probes stay AMBIGUOUS with error code."""
     client = _make_client(monkeypatch)
     client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
-        return_value=MagicMock(success=True, order_id="O1", error=None, grpc_status=0)
+        return_value=MagicMock(success=True, order_id="O1", order_number=None, error=None, grpc_status=0)
     )
     client._ws.get_positions = AsyncMock(return_value=[])  # never appears
 

@@ -1,17 +1,22 @@
 """End-to-end validation against a real XTB account.
 
-Exercises read operations and the typed-outcome surface introduced in W1
-(TradeOutcome, TradeResult, AmbiguousOutcomeError, INSUFFICIENT_VOLUME /
-INSTRUMENT_NOT_FOUND error_codes) against a live account.
+Exercises read operations, the typed-outcome surface (TradeOutcome,
+TradeResult, INSUFFICIENT_VOLUME / INSTRUMENT_NOT_FOUND error_codes,
+QUEUED classification for market-closed orders), and the
+``cancel_order`` path against a live account.
 
 **This script can move real money.** It ships in two modes:
 
 * **read-only (default)** — balance, positions, search, plus the two
   non-trading typed-failure paths (volume=0, unknown symbol). Safe to run
   on any account, any time.
-* **live trade (`--live` AND env ``XTB_VALIDATE_LIVE=1``)** — also places a
-  BUY then a SELL for 1 share of the cheap ticker (default: CIG.PL). Both
-  gates are required so a stray flag alone can't execute trades.
+* **live trade (`--live` AND env ``XTB_VALIDATE_LIVE=1``)** — also places
+  a BUY for each symbol in ``--symbols`` (default: ``CIG.PL AAPL.US``).
+  Per symbol: FILLED → closes with a SELL; QUEUED → cancels the order so
+  it does not fill at next market open. GPW and US markets have different
+  trading hours, so running at different times of day naturally exercises
+  both the FILLED and QUEUED paths. Both flags are required so a stray
+  one alone can't execute trades.
 
 Credentials come from ``.env`` in the repo root (override with
 ``--env-file``)::
@@ -30,8 +35,12 @@ Usage::
     # Point at a different .env:
     uv run python scripts/validate_live.py --env-file ~/some/.env
 
-    # Live validation with buy+sell (both required):
+    # Live validation: buy-and-close / buy-and-cancel per symbol:
     XTB_VALIDATE_LIVE=1 uv run python scripts/validate_live.py --live
+
+    # Override which symbols to exercise:
+    XTB_VALIDATE_LIVE=1 uv run python scripts/validate_live.py --live \\
+        --symbols CIG.PL NVDA.US
 
 Re-run after any library change to confirm nothing regressed on the wire.
 """
@@ -48,9 +57,11 @@ from pathlib import Path
 
 from xtb_api import SessionSource, XTBClient
 from xtb_api.exceptions import XTBError
-from xtb_api.types.trading import TradeOutcome, TradeResult
+from xtb_api.types.trading import CancelOutcome, TradeOutcome, TradeResult
 
-DEFAULT_SYMBOL = "CIG.PL"
+DEFAULT_SYMBOLS = ("CIG.PL", "AAPL.US")
+SEARCH_PROBE_SYMBOL = DEFAULT_SYMBOLS[0]
+TYPED_FAILURE_SYMBOL = DEFAULT_SYMBOLS[0]
 UNKNOWN_SYMBOL = "DEFINITELY_NOT_A_REAL_TICKER.XX"
 LIVE_ENV_GATE = "XTB_VALIDATE_LIVE"
 
@@ -123,6 +134,8 @@ def describe(result: TradeResult) -> str:
     match result.status:
         case TradeOutcome.FILLED:
             headline = f"FILLED order={result.order_id} price={result.price}"
+        case TradeOutcome.QUEUED:
+            headline = f"QUEUED order_number={result.order_number} — awaiting market open"
         case TradeOutcome.REJECTED:
             headline = f"REJECTED code={result.error_code} error={result.error!r}"
         case TradeOutcome.AMBIGUOUS:
@@ -149,9 +162,9 @@ async def run_readonly(client: XTBClient) -> None:
     for p in positions:
         print(f"    {p.symbol} {p.side} vol={p.volume} open={p.open_price} id={p.order_id}")
 
-    hits = await client.search_instrument(DEFAULT_SYMBOL)
-    match = next((h for h in hits if h.symbol.upper() == DEFAULT_SYMBOL), None)
-    print(f"  search({DEFAULT_SYMBOL!r}): {len(hits)} results, exact match: {match is not None}")
+    hits = await client.search_instrument(SEARCH_PROBE_SYMBOL)
+    match = next((h for h in hits if h.symbol.upper() == SEARCH_PROBE_SYMBOL), None)
+    print(f"  search({SEARCH_PROBE_SYMBOL!r}): {len(hits)} results, exact match: {match is not None}")
 
 
 async def run_typed_failures(client: XTBClient) -> bool:
@@ -159,7 +172,7 @@ async def run_typed_failures(client: XTBClient) -> bool:
     print("\n── Typed failure paths (no money moved) ───────────────")
     ok = True
 
-    zero = await client.buy(DEFAULT_SYMBOL, volume=0)
+    zero = await client.buy(TYPED_FAILURE_SYMBOL, volume=0)
     print(f"  buy(volume=0): {describe(zero)}")
     if zero.status is not TradeOutcome.INSUFFICIENT_VOLUME:
         print(f"    ✗ expected INSUFFICIENT_VOLUME, got {zero.status}")
@@ -177,38 +190,92 @@ async def run_typed_failures(client: XTBClient) -> bool:
     return ok
 
 
-async def run_live_trades(client: XTBClient, symbol: str) -> bool:
-    """BUY 1 share → verify → SELL 1 share → verify. Real money."""
-    print("\n── Live trade cycle (REAL MONEY) ──────────────────────")
+async def run_live_trade(client: XTBClient, symbol: str) -> tuple[bool, str]:
+    """Exercise the live-trade cycle for one symbol.
+
+    BUY 1 share; then branch on outcome:
+    - FILLED  → SELL 1 share; both legs must FILL.
+    - QUEUED  → cancel_order(order_number); cancel must CANCELLED.
+    - else    → fail.
+
+    Returns ``(ok, label)`` where ``label`` describes which branch was
+    exercised (``"FILLED/SELL"`` or ``"QUEUED/CANCEL"``) for the summary.
+    """
+    print(f"\n── Live trade: {symbol} ───────────────────────────────")
 
     buy_res = await client.buy(symbol, volume=1)
     print(f"  {describe(buy_res)}")
-    if buy_res.status is not TradeOutcome.FILLED:
-        print(f"    ✗ buy did not FILL ({buy_res.status}); aborting — will NOT attempt sell")
-        return False
 
-    await asyncio.sleep(1.0)
-    positions = await client.get_positions()
-    matched = [p for p in positions if p.order_id == buy_res.order_id]
-    print(f"  after-buy positions: {len(positions)} total, matching order_id: {len(matched)}")
+    if buy_res.status is TradeOutcome.FILLED:
+        await asyncio.sleep(1.0)
+        positions = await client.get_positions()
+        matched = [p for p in positions if p.order_id == buy_res.order_id]
+        print(f"  after-buy positions: {len(positions)} total, matching order_id: {len(matched)}")
 
-    sell_res = await client.sell(symbol, volume=1)
-    print(f"  {describe(sell_res)}")
-    if sell_res.status is not TradeOutcome.FILLED:
-        print(f"    ✗ sell did not FILL ({sell_res.status}); manual reconciliation required")
-        return False
+        sell_res = await client.sell(symbol, volume=1)
+        print(f"  {describe(sell_res)}")
+        if sell_res.status is not TradeOutcome.FILLED:
+            print(f"    ✗ sell did not FILL ({sell_res.status}); manual reconciliation required")
+            return False, "FILLED/SELL"
 
-    await asyncio.sleep(1.0)
-    positions = await client.get_positions()
-    print(f"  after-sell positions: {len(positions)} total")
+        await asyncio.sleep(1.0)
+        positions = await client.get_positions()
+        still_open = [p for p in positions if p.order_id == buy_res.order_id]
+        print(f"  after-sell positions: {len(positions)} total, original order still open: {len(still_open)}")
+        return True, "FILLED/SELL"
 
-    return True
+    if buy_res.status is TradeOutcome.QUEUED:
+        if buy_res.order_number is None:
+            print("    ✗ QUEUED but order_number is None — cannot cancel")
+            return False, "QUEUED/CANCEL"
+        cancel_res = await client.cancel_order(buy_res.order_number)
+        print(
+            f"  cancel_order({buy_res.order_number}): status={cancel_res.status.value} "
+            f"cancellation_id={cancel_res.cancellation_id} error={cancel_res.error!r}"
+        )
+        if cancel_res.status is not CancelOutcome.CANCELLED:
+            print(f"    ✗ cancel did not succeed ({cancel_res.status}); manual reconciliation required")
+            return False, "QUEUED/CANCEL"
+        return True, "QUEUED/CANCEL"
+
+    print(f"    ✗ buy returned unexpected status {buy_res.status}; no SELL/CANCEL attempted")
+    return False, f"BUY={buy_res.status.value}"
+
+
+async def run_live_trades(client: XTBClient, symbols: list[str]) -> bool:
+    """Run the per-symbol live-trade cycle across all symbols. Real money."""
+    print("\n── Live trade cycle (REAL MONEY) ──────────────────────")
+    print(f"  symbols: {', '.join(symbols)}")
+
+    all_ok = True
+    summary: list[tuple[str, bool, str]] = []
+    for sym in symbols:
+        ok, label = await run_live_trade(client, sym)
+        summary.append((sym, ok, label))
+        if not ok:
+            all_ok = False
+
+    print("\n  per-symbol summary:")
+    for sym, ok, label in summary:
+        mark = "✓" if ok else "✗"
+        print(f"    {mark} {sym}  path={label}")
+
+    return all_ok
 
 
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--live", action="store_true", help=f"Execute buy+sell. Requires {LIVE_ENV_GATE}=1 env var.")
-    parser.add_argument("--symbol", default=DEFAULT_SYMBOL, help=f"Ticker for live trades (default: {DEFAULT_SYMBOL})")
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help=f"Execute buy-and-close / buy-and-cancel per symbol. Requires {LIVE_ENV_GATE}=1 env var.",
+    )
+    parser.add_argument(
+        "--symbols",
+        nargs="+",
+        default=list(DEFAULT_SYMBOLS),
+        help=f"Tickers for live trades (default: {' '.join(DEFAULT_SYMBOLS)}).",
+    )
     parser.add_argument("--env-file", type=Path, default=None, help="Path to .env file (default: <repo_root>/.env)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable INFO-level logging.")
     args = parser.parse_args()
@@ -230,7 +297,7 @@ async def main() -> int:
     print("═════════════════════════════════════════════════════════")
     print(" xtb-api-python — live validation")
     print(f" mode: {'LIVE (real money)' if live_mode else 'READ-ONLY'}")
-    print(f" symbol: {args.symbol if live_mode else '—'}")
+    print(f" symbols: {' '.join(args.symbols) if live_mode else '—'}")
     print("═════════════════════════════════════════════════════════")
 
     email = require("XTB_EMAIL")
@@ -268,7 +335,7 @@ async def main() -> int:
             exit_code = 1
 
         if live_mode:
-            if not await run_live_trades(client, args.symbol):
+            if not await run_live_trades(client, args.symbols):
                 exit_code = 1
         else:
             print("\n── Skipped live trade cycle (--live not set, or gate env missing).")
