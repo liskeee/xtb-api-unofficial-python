@@ -282,6 +282,12 @@ class GrpcClient:
         wire call. Returns one ``GrpcCancelResult`` per input order number,
         in input order. On network failure every order reports the same
         underlying error string.
+
+        Duplicate order numbers in the input list produce undefined
+        per-row results: the server returns one acknowledgement per unique
+        order_number and duplicates in the input get their cancellation_id
+        copied from the first occurrence. Callers should pass unique order
+        numbers.
         """
         jwt = await self._ensure_jwt()
         logger.info("gRPC cancel: order_numbers=%s", order_numbers)
