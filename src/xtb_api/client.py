@@ -265,6 +265,9 @@ class XTBClient:
                 error_code="AMBIGUOUS_NO_RESPONSE",
             )
 
+        # Status 7 (PermissionDenied) is the only code observed from XTB so
+        # far (e.g. cancelling an unknown order number). Other non-zero codes
+        # fall through with error_code=None until we see them in the wild.
         error_code: str | None = None
         if grpc_result.grpc_status == 7:
             error_code = "RBAC_DENIED"
