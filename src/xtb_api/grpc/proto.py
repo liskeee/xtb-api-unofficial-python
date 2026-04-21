@@ -228,9 +228,7 @@ def extract_jwt(data: bytes) -> str | None:
     return match.group(0) if match else None
 
 
-_UUID_RE = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-)
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 def _parse_uuid_and_order_number(payload: bytes) -> tuple[str | None, int | None]:

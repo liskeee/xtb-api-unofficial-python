@@ -115,9 +115,7 @@ async def test_rbac_retry_position_wrong_side_does_not_match(
     # After retry, classification probe sees the new buy position too.
     other_side = _pos("CIG.PL", 5, "sell", "OTHER")
     new_buy = _pos("CIG.PL", 5, "buy", "NEW")
-    client._ws.get_positions = AsyncMock(
-        side_effect=[[other_side], [other_side, new_buy], [other_side, new_buy]]
-    )
+    client._ws.get_positions = AsyncMock(side_effect=[[other_side], [other_side, new_buy], [other_side, new_buy]])
 
     result = await client.buy("CIG.PL", volume=5)
 

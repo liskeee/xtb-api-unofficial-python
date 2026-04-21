@@ -58,9 +58,7 @@ async def test_fill_price_retries_three_times(monkeypatch: pytest.MonkeyPatch) -
     )
     # Classification probe (call 1) finds the position immediately, triggering FILLED path.
     # _poll_fill_price then retries: calls 2 and 3 return empty, call 4 returns the price.
-    client._ws.get_positions = AsyncMock(
-        side_effect=[[_pos("CIG.PL", 0.0)], [], [], [_pos("CIG.PL", 99.0)]]
-    )
+    client._ws.get_positions = AsyncMock(side_effect=[[_pos("CIG.PL", 0.0)], [], [], [_pos("CIG.PL", 99.0)]])
 
     result = await client.buy("CIG.PL", volume=1)
 

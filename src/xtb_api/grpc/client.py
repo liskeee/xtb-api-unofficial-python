@@ -299,16 +299,11 @@ class GrpcClient:
             response_bytes = await self._grpc_call(GRPC_DELETE_ORDERS_ENDPOINT, body_b64, jwt=jwt)
         except httpx.HTTPError as e:
             logger.warning("gRPC cancel network error: %s", e, exc_info=True)
-            return [
-                GrpcCancelResult(success=False, order_number=n, error=str(e))
-                for n in order_numbers
-            ]
+            return [GrpcCancelResult(success=False, order_number=n, error=str(e)) for n in order_numbers]
 
         return self._parse_cancel_response(response_bytes, order_numbers)
 
-    def _parse_cancel_response(
-        self, response_bytes: bytes, order_numbers: list[int]
-    ) -> list[GrpcCancelResult]:
+    def _parse_cancel_response(self, response_bytes: bytes, order_numbers: list[int]) -> list[GrpcCancelResult]:
         """Parse a DeleteOrders response into one result per requested order.
 
         The wire carries one data frame per cancelled order plus one trailer

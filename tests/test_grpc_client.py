@@ -456,19 +456,14 @@ class TestCancelOrders:
         )
 
         inner = encode_field_varint(1, order_number)
-        data_msg = (
-            encode_field_bytes(1, cancellation_uuid.encode("utf-8"))
-            + encode_field_bytes(2, inner)
-        )
+        data_msg = encode_field_bytes(1, cancellation_uuid.encode("utf-8")) + encode_field_bytes(2, inner)
         data_frame = build_grpc_frame(data_msg)
         trailer = b"grpc-status:0\r\n"
         trailer_frame = struct.pack(">BI", 0x80, len(trailer)) + trailer
         return base64.b64encode(data_frame + trailer_frame).decode("ascii")
 
     @pytest.mark.asyncio
-    async def test_cancel_single_order_happy_path(
-        self, monkeypatch: pytest.MonkeyPatch, httpx_mock
-    ) -> None:
+    async def test_cancel_single_order_happy_path(self, monkeypatch: pytest.MonkeyPatch, httpx_mock) -> None:
         from xtb_api.grpc.client import GrpcClient
         from xtb_api.grpc.proto import GRPC_DELETE_ORDERS_ENDPOINT
 
@@ -498,9 +493,7 @@ class TestCancelOrders:
         await client.disconnect()
 
     @pytest.mark.asyncio
-    async def test_cancel_non_zero_grpc_status_marks_failure(
-        self, monkeypatch: pytest.MonkeyPatch, httpx_mock
-    ) -> None:
+    async def test_cancel_non_zero_grpc_status_marks_failure(self, monkeypatch: pytest.MonkeyPatch, httpx_mock) -> None:
         import base64
         import struct
 

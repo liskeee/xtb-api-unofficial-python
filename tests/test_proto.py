@@ -336,6 +336,5 @@ class TestEndpoints:
         from xtb_api.grpc.proto import GRPC_DELETE_ORDERS_ENDPOINT
 
         assert GRPC_DELETE_ORDERS_ENDPOINT == (
-            "https://ipax.xtb.com/"
-            "pl.xtb.ipax.pub.grpc.cashtradingneworder.v1.CashTradingNewOrderService/DeleteOrders"
+            "https://ipax.xtb.com/pl.xtb.ipax.pub.grpc.cashtradingneworder.v1.CashTradingNewOrderService/DeleteOrders"
         )
