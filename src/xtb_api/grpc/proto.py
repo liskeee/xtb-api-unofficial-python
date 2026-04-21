@@ -318,3 +318,6 @@ GRPC_CONFIRM_ENDPOINT = (
 GRPC_CLOSE_POSITION_ENDPOINT = (
     f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.cashtradingneworder.v1.CashTradingNewOrderService/CloseSinglePosition"
 )
+GRPC_DELETE_ORDERS_ENDPOINT = (
+    f"{GRPC_BASE_URL}/pl.xtb.ipax.pub.grpc.cashtradingneworder.v1.CashTradingNewOrderService/DeleteOrders"
+)

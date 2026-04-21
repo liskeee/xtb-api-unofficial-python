@@ -327,3 +327,15 @@ class TestParseDeleteOrdersResponse:
         cancellation_id, order_number = parse_delete_orders_response(payload)
         assert cancellation_id == "9e5b4600-2ecb-4e4b-a92c-e465367a80f9"
         assert order_number == 872077045
+
+
+class TestEndpoints:
+    """Endpoint constants must match the xStation5 HAR-captured URLs."""
+
+    def test_delete_orders_endpoint_matches_xstation5_url(self):
+        from xtb_api.grpc.proto import GRPC_DELETE_ORDERS_ENDPOINT
+
+        assert GRPC_DELETE_ORDERS_ENDPOINT == (
+            "https://ipax.xtb.com/"
+            "pl.xtb.ipax.pub.grpc.cashtradingneworder.v1.CashTradingNewOrderService/DeleteOrders"
+        )
