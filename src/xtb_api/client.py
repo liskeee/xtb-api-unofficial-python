@@ -519,12 +519,8 @@ class XTBClient:
             if attempt == 1:
                 await asyncio.sleep(0.5)
 
-            try:
-                position = await self._find_matching_position(symbol, volume, side_str)
-            except Exception as exc:  # noqa: BLE001 — broad by design; we fall through
-                logger.warning("get_positions probe failed: %s", exc)
-                position = None
-                last_exc = str(exc)
+            # _find_matching_position is defensive and returns None on WS errors.
+            position = await self._find_matching_position(symbol, volume, side_str)
 
             if position is not None:
                 fill_price, fill_code = await self._poll_fill_price(symbol)
@@ -546,7 +542,8 @@ class XTBClient:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("get_orders probe failed: %s", exc)
                     orders = []
-                    last_exc = str(exc)
+                    if last_exc is None:
+                        last_exc = str(exc)
 
                 target = str(order_number)
                 if any(o.order_id == target for o in orders):
