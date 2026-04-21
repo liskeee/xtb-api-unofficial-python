@@ -21,7 +21,16 @@ from xtb_api.exceptions import AmbiguousOutcomeError, InstrumentNotFoundError
 from xtb_api.grpc.client import GrpcClient
 from xtb_api.grpc.proto import SIDE_BUY, SIDE_SELL
 from xtb_api.types.instrument import InstrumentSearchResult, Quote
-from xtb_api.types.trading import AccountBalance, PendingOrder, Position, TradeOptions, TradeOutcome, TradeResult
+from xtb_api.types.trading import (
+    AccountBalance,
+    CancelOutcome,
+    CancelResult,
+    PendingOrder,
+    Position,
+    TradeOptions,
+    TradeOutcome,
+    TradeResult,
+)
 from xtb_api.types.websocket import WSClientConfig
 from xtb_api.utils import price_from_decimal
 from xtb_api.ws.ws_client import XTBWebSocketClient
@@ -223,6 +232,49 @@ class XTBClient:
             options: Advanced trade options (overrides stop_loss/take_profit)
         """
         return await self._execute_trade(symbol, volume, SIDE_SELL, stop_loss, take_profit, options)
+
+    async def cancel_order(self, order_number: int) -> CancelResult:
+        """Cancel a queued or pending broker order by its order number.
+
+        Pass the ``order_number`` from a ``TradeResult`` (populated on
+        both FILLED and QUEUED outcomes). Returns a typed
+        :class:`CancelResult` whose ``status`` is a :class:`CancelOutcome`.
+
+        ``CancelOutcome.REJECTED`` is a common and expected outcome — if
+        the order filled between the trade request and the cancel, the
+        broker has no queued order left to cancel.
+        """
+        grpc = self._ensure_grpc()
+        grpc_results = await grpc.cancel_orders([order_number])
+        grpc_result = grpc_results[0]
+
+        if grpc_result.success:
+            return CancelResult(
+                status=CancelOutcome.CANCELLED,
+                order_number=grpc_result.order_number,
+                cancellation_id=grpc_result.cancellation_id,
+            )
+
+        # Network failures leave grpc_status=0 (no trailer observed); broker
+        # rejections carry a non-zero grpc_status from the trailer.
+        if grpc_result.grpc_status == 0:
+            return CancelResult(
+                status=CancelOutcome.AMBIGUOUS,
+                order_number=grpc_result.order_number,
+                error=grpc_result.error,
+                error_code="AMBIGUOUS_NO_RESPONSE",
+            )
+
+        error_code: str | None = None
+        if grpc_result.grpc_status == 7:
+            error_code = "RBAC_DENIED"
+
+        return CancelResult(
+            status=CancelOutcome.REJECTED,
+            order_number=grpc_result.order_number,
+            error=grpc_result.error,
+            error_code=error_code,
+        )
 
     # ── Real-time Events ─────────────────────────────────────────
 
