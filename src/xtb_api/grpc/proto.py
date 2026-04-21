@@ -146,6 +146,19 @@ def build_create_access_token_request(tgt: str, account_number: str, account_ser
     return encode_field_bytes(1, tgt.encode("utf-8")) + encode_field_bytes(2, account_msg)
 
 
+def build_delete_orders_request(order_numbers: list[int]) -> bytes:
+    """Build DeleteOrders protobuf message.
+
+    Wire format (from HAR analysis, single-cancel case):
+        Field 1 (bytes, wire type 2): packed repeated uint64 — concatenated
+            varints of the broker order numbers to cancel. No inner tags.
+
+    For ``[872077045]`` this produces ``0a 05 f5 ad eb 9f 03`` (7 bytes).
+    """
+    packed = b"".join(encode_varint(n) for n in order_numbers)
+    return encode_field_bytes(1, packed)
+
+
 def parse_grpc_frames(data: bytes) -> list[bytes]:
     """Parse one or more gRPC-web frames from response data.
 

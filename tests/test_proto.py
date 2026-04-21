@@ -227,3 +227,33 @@ class TestExtractJwt:
         # Should not crash
         result = extract_jwt(data)
         assert result is None or isinstance(result, str)
+
+
+class TestBuildDeleteOrdersRequest:
+    """DeleteOrders request: field 1 = packed repeated uint64 (order numbers).
+
+    Wire reference: captured in demo_market_closed.har entry 3, single cancel
+    of order 872077045 produced exactly these 7 payload bytes.
+    """
+
+    def test_single_order_matches_har_bytes(self):
+        from xtb_api.grpc.proto import build_delete_orders_request
+
+        msg = build_delete_orders_request([872077045])
+        # Expected: 0a (field 1, wire 2) 05 (length) f5 ad eb 9f 03 (packed varint 872077045)
+        assert msg == bytes.fromhex("0a05f5adeb9f03")
+
+    def test_multiple_orders_packed(self):
+        from xtb_api.grpc.proto import build_delete_orders_request
+
+        msg = build_delete_orders_request([1, 127, 128])
+        # Packed payload: 01 (varint 1) 7f (varint 127) 80 01 (varint 128) → 4 bytes
+        # Full: 0a (tag) 04 (length) 01 7f 80 01
+        assert msg == bytes.fromhex("0a04017f8001")
+
+    def test_empty_list_produces_empty_packed_field(self):
+        from xtb_api.grpc.proto import build_delete_orders_request
+
+        # field 1 with length 0 is still valid protobuf
+        msg = build_delete_orders_request([])
+        assert msg == bytes.fromhex("0a00")
