@@ -17,6 +17,7 @@ from typing import Any, Literal, cast
 
 from xtb_api.auth.auth_manager import AuthManager, SessionSource
 from xtb_api.auth.cas_client import CASClientConfig
+from xtb_api.config import resolve_account_server, resolve_account_type, resolve_ws_url
 from xtb_api.exceptions import AmbiguousOutcomeError, InstrumentNotFoundError
 from xtb_api.grpc.client import GrpcClient
 from xtb_api.grpc.proto import SIDE_BUY, SIDE_SELL
@@ -65,9 +66,10 @@ class XTBClient:
         *,
         totp_secret: str = "",
         session_file: Path | str | None = None,
-        ws_url: str = "wss://api5reala.x-station.eu/v1/xstation",
+        account_type: Literal["real", "demo"] | None = None,
+        ws_url: str | None = None,
         endpoint: str = "meta1",
-        account_server: str = "XS-real1",
+        account_server: str | None = None,
         auto_reconnect: bool = True,
         cas_config: CASClientConfig | None = None,
     ) -> None:
@@ -78,14 +80,24 @@ class XTBClient:
             account_number: XTB account number.
             totp_secret: Base32 TOTP secret for automatic 2FA (optional).
             session_file: Path to cache TGT on disk (optional).
-            ws_url: WebSocket endpoint URL.
+            account_type: 'real' (default) or 'demo'. Selects the matching
+                ``ws_url`` + ``account_server`` pair. Falls back to the
+                ``XTB_ACCOUNT_TYPE`` env var when unset.
+            ws_url: WebSocket endpoint URL. Defaults to the preset for the
+                resolved ``account_type``; can also be set via ``XTB_WS_URL``.
             endpoint: Server endpoint name (e.g., 'meta1').
-            account_server: gRPC account server name.
+            account_server: gRPC account server name. Defaults to the preset
+                for the resolved ``account_type``; can also be set via
+                ``XTB_ACCOUNT_SERVER``.
             auto_reconnect: Auto-reconnect WebSocket on disconnect.
             cas_config: Custom CAS client configuration (optional).
         """
+        resolved_account_type = resolve_account_type(account_type)
+        resolved_ws_url = resolve_ws_url(ws_url, resolved_account_type)
+        resolved_account_server = resolve_account_server(account_server, resolved_account_type)
+
         self._account_number = account_number
-        self._account_server = account_server
+        self._account_server = resolved_account_server
 
         # Auth manager — shared by WS and gRPC
         self._auth = AuthManager(
@@ -98,7 +110,7 @@ class XTBClient:
 
         # WebSocket client — always created
         ws_config = WSClientConfig(
-            url=ws_url,
+            url=resolved_ws_url,
             account_number=account_number,
             endpoint=endpoint,
             auto_reconnect=auto_reconnect,

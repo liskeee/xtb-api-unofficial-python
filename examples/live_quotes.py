@@ -27,7 +27,6 @@ async def main() -> None:
         password=os.environ["XTB_PASSWORD"],
         account_number=int(os.environ["XTB_ACCOUNT_NUMBER"]),
         totp_secret=os.environ.get("XTB_TOTP_SECRET", ""),
-        ws_url=os.environ.get("XTB_WS_URL", "wss://api5reala.x-station.eu/v1/xstation"),
         session_file=Path.home() / ".xtb_session",
     )
 

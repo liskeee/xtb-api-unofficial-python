@@ -10,7 +10,7 @@ Usage::
     export XTB_ACCOUNT_NUMBER=12345678
     # Optional:
     #   XTB_TOTP_SECRET   — Base32 TOTP secret for auto-2FA
-    #   XTB_WS_URL        — override WebSocket endpoint (default: real)
+    #   XTB_ACCOUNT_TYPE  — 'real' (default) or 'demo'
     python examples/basic_usage.py
 """
 
@@ -30,7 +30,6 @@ async def main() -> None:
         password=os.environ["XTB_PASSWORD"],
         account_number=int(os.environ["XTB_ACCOUNT_NUMBER"]),
         totp_secret=os.environ.get("XTB_TOTP_SECRET", ""),
-        ws_url=os.environ.get("XTB_WS_URL", "wss://api5reala.x-station.eu/v1/xstation"),
         session_file=Path.home() / ".xtb_session",
     )
 

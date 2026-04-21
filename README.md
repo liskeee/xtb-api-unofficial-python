@@ -163,9 +163,10 @@ await client.sell("CIG.PL", volume=100, options=TradeOptions(
 | `account_number` | Yes | — | XTB account number |
 | `totp_secret` | No | `""` | Base32 TOTP secret for auto 2FA |
 | `session_file` | No | `None` | Path to persist auth session |
-| `ws_url` | No | Real server | WebSocket endpoint URL |
+| `account_type` | No | `"real"` | `"real"` or `"demo"` — selects matching `ws_url` + `account_server` preset (see Demo vs Real) |
+| `ws_url` | No | resolved from `account_type` | WebSocket endpoint URL |
 | `endpoint` | No | `"meta1"` | Server endpoint name |
-| `account_server` | No | `"XS-real1"` | gRPC account server |
+| `account_server` | No | resolved from `account_type` | gRPC account server |
 | `auto_reconnect` | No | `True` | Auto-reconnect on disconnect |
 
 ### `InstrumentRegistry`
@@ -180,12 +181,19 @@ Persistent symbol → instrument-ID cache, stored as JSON.
 | `populate(client, symbols)` | `dict[str, int]` | Download the full symbol list via `client`, match requested `symbols` (case-insensitive, dot-less fallback), persist, return new matches |
 | `ids` | `dict[str, int]` | Read-only copy of the full cache |
 
-### WebSocket URLs
+### Demo vs Real
 
-| Environment | URL |
-|-------------|-----|
-| Real | `wss://api5reala.x-station.eu/v1/xstation` (default) |
-| Demo | `wss://api5demoa.x-station.eu/v1/xstation` |
+Set `XTB_ACCOUNT_TYPE=demo` in your environment (or pass
+`account_type="demo"` to `XTBClient`) to connect to XTB's paper-trading
+environment instead of live. The library picks the correct WebSocket
+endpoint and account server as a pair — you never need to set both
+manually.
+
+Defaults to `real` when unset, matching previous versions.
+
+For non-standard endpoints or account servers, `XTB_WS_URL` and
+`XTB_ACCOUNT_SERVER` env vars override each field individually and win
+over the `account_type` preset — see `.env.example`.
 
 ### Advanced: Direct Access
 

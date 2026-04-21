@@ -6,9 +6,8 @@ Trades go through gRPC internally, but the consumer API is
 example shows the match-on-status pattern that replaces the v0.x
 string-match on free-text error messages.
 
-WARNING: this example places a real order. Use a demo account / demo
-WebSocket URL (``wss://api5demoa.x-station.eu/v1/xstation``) unless you
-are deliberately testing on a live account.
+WARNING: this example places a real order. Set XTB_ACCOUNT_TYPE=demo
+in your environment unless you deliberately want a live order.
 
 Set the live gate explicitly to actually submit the order::
 
@@ -58,7 +57,6 @@ async def main() -> int:
         password=os.environ["XTB_PASSWORD"],
         account_number=int(os.environ["XTB_ACCOUNT_NUMBER"]),
         totp_secret=os.environ.get("XTB_TOTP_SECRET", ""),
-        ws_url=os.environ.get("XTB_WS_URL", "wss://api5reala.x-station.eu/v1/xstation"),
         session_file=Path.home() / ".xtb_session",
     )
 
