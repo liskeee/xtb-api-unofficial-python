@@ -48,3 +48,13 @@ def resolve_account_type(explicit: AccountType | None) -> AccountType:
             f"Unknown account_type {raw!r}. Expected 'real' or 'demo'."
         )
     return raw  # type: ignore[return-value]
+
+
+def resolve_ws_url(explicit: str | None, account_type: AccountType) -> str:
+    """Resolve ws_url from explicit kwarg → XTB_WS_URL env → preset."""
+    if explicit is not None:
+        return explicit
+    env = os.environ.get("XTB_WS_URL", "").strip()
+    if env:
+        return env
+    return PRESETS[account_type]["ws_url"]

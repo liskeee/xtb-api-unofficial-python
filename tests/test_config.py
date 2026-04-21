@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from xtb_api.config import resolve_account_type
+from xtb_api.config import PRESETS, resolve_account_type, resolve_ws_url
 
 
 class TestResolveAccountType:
@@ -61,3 +61,38 @@ class TestResolveAccountType:
         monkeypatch.delenv("XTB_ACCOUNT_TYPE", raising=False)
         with pytest.raises(ValueError, match="bogus"):
             resolve_account_type("bogus")  # type: ignore[arg-type]
+
+
+class TestResolveWsUrl:
+    """ws_url resolves via kwarg → XTB_WS_URL env → preset."""
+
+    def test_preset_used_when_nothing_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no kwarg and no env, fall back to the preset for the given type."""
+        monkeypatch.delenv("XTB_WS_URL", raising=False)
+        assert resolve_ws_url(None, "demo") == PRESETS["demo"]["ws_url"]
+
+    def test_real_preset_used_when_nothing_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same fallback for the real account type."""
+        monkeypatch.delenv("XTB_WS_URL", raising=False)
+        assert resolve_ws_url(None, "real") == PRESETS["real"]["ws_url"]
+
+    def test_env_beats_preset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """XTB_WS_URL overrides the preset when no kwarg."""
+        monkeypatch.setenv("XTB_WS_URL", "wss://staging.example.com/ws")
+        assert resolve_ws_url(None, "demo") == "wss://staging.example.com/ws"
+
+    def test_kwarg_beats_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Explicit kwarg wins over XTB_WS_URL."""
+        monkeypatch.setenv("XTB_WS_URL", "wss://staging.example.com/ws")
+        assert resolve_ws_url("wss://custom/", "demo") == "wss://custom/"
+
+    def test_empty_env_falls_back_to_preset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty XTB_WS_URL env is treated as unset."""
+        monkeypatch.setenv("XTB_WS_URL", "")
+        assert resolve_ws_url(None, "demo") == PRESETS["demo"]["ws_url"]
