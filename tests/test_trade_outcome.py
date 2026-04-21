@@ -12,6 +12,7 @@ class TestTradeOutcomeEnum:
         members = {m.name for m in TradeOutcome}
         assert members == {
             "FILLED",
+            "QUEUED",
             "REJECTED",
             "AMBIGUOUS",
             "INSUFFICIENT_VOLUME",
@@ -67,4 +68,62 @@ class TestTradeResult:
                 symbol="X",
                 side="buy",
                 volume=1.0,
+            )
+
+
+class TestQueuedOutcome:
+    def test_queued_is_distinct_and_not_success(self):
+        from xtb_api.types.trading import TradeOutcome, TradeResult
+
+        assert TradeOutcome.QUEUED.value == "QUEUED"
+        r = TradeResult(
+            status=TradeOutcome.QUEUED,
+            symbol="AAPL.US",
+            side="buy",
+            volume=1.0,
+            order_id="abc",
+            order_number=872077045,
+        )
+        assert r.status is TradeOutcome.QUEUED
+        assert r.success is False
+        assert r.order_number == 872077045
+
+    def test_order_number_defaults_to_none(self):
+        from xtb_api.types.trading import TradeOutcome, TradeResult
+
+        r = TradeResult(status=TradeOutcome.REJECTED, symbol="X", side="buy", volume=1.0)
+        assert r.order_number is None
+
+
+class TestCancelOutcomeAndResult:
+    def test_cancel_outcome_values(self):
+        from xtb_api.types.trading import CancelOutcome
+
+        assert CancelOutcome.CANCELLED.value == "CANCELLED"
+        assert CancelOutcome.REJECTED.value == "REJECTED"
+        assert CancelOutcome.AMBIGUOUS.value == "AMBIGUOUS"
+
+    def test_cancel_result_success_property(self):
+        from xtb_api.types.trading import CancelOutcome, CancelResult
+
+        ok = CancelResult(
+            status=CancelOutcome.CANCELLED,
+            order_number=42,
+            cancellation_id="uuid",
+        )
+        assert ok.success is True
+
+        bad = CancelResult(status=CancelOutcome.REJECTED, order_number=42)
+        assert bad.success is False
+
+    def test_cancel_result_rejects_extra_fields(self):
+        import pydantic
+
+        from xtb_api.types.trading import CancelOutcome, CancelResult
+
+        with pytest.raises(pydantic.ValidationError):
+            CancelResult(
+                status=CancelOutcome.CANCELLED,
+                order_number=42,
+                extra_garbage="no",  # type: ignore[call-arg]
             )
