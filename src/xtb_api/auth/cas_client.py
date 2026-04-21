@@ -378,7 +378,12 @@ class CASClient:
         client = await self._ensure_http()
         resp = await client.post(url, data=form_data, headers=headers)
 
-        if resp.status_code == 401:
+        # XTB's CAS v1 endpoint returns 404 (not 401) when the TGT is
+        # missing server-side — typically after a forced logout from
+        # another device or server-side rotation. Treat both as the same
+        # recoverable state so AuthManager.get_service_ticket invalidates
+        # the cache and performs a fresh CAS login.
+        if resp.status_code in (401, 404):
             raise CASError("CAS_TGT_EXPIRED", "TGT has expired or is invalid")
 
         if not resp.is_success:
@@ -413,7 +418,7 @@ class CASClient:
         client = await self._ensure_http()
         resp = await client.post(url, json=payload, headers=headers)
 
-        if resp.status_code == 401:
+        if resp.status_code in (401, 404):
             raise CASError("CAS_TGT_EXPIRED", "TGT has expired or is invalid")
 
         if not resp.is_success:
