@@ -3,13 +3,164 @@
 
 ## v0.8.0 (2026-04-21)
 
-### Added
+### Code Style
 
-- `XTB_ACCOUNT_TYPE` environment variable and `account_type` kwarg on
-  `XTBClient` to select demo or real XTB environment. Library resolves
-  `ws_url` and `account_server` as a pair, so demo users no longer have
-  to remember both overrides. `XTB_WS_URL` and new `XTB_ACCOUNT_SERVER`
-  are kept as per-field escape hatches.
+- **config**: Apply ruff format
+  ([`73cc6d3`](https://github.com/liskeee/xtb-api-unofficial-python/commit/73cc6d3b976e6ccf629c2ffcf637923c1c324e92))
+
+Collapse multi-line signatures under the 120-char line limit; no behavior change. Caught by ruff
+  format --check in final verification.
+
+### Documentation
+
+- **changelog**: Note v0.8.0 account_type addition
+  ([`02ebe58`](https://github.com/liskeee/xtb-api-unofficial-python/commit/02ebe589d050dea937035bc86ec34e1bab6b3e12))
+
+- **env**: Add XTB_ACCOUNT_TYPE as primary switch
+  ([`f5fdb5e`](https://github.com/liskeee/xtb-api-unofficial-python/commit/f5fdb5ed8991e6f7adda7c49f46d79aea7f0e361))
+
+Ship the example with XTB_ACCOUNT_TYPE=demo because demo is the safe default for anyone copying this
+  file on their first run.
+
+- **examples**: Drop ws_url kwarg from basic_usage
+  ([`d357036`](https://github.com/liskeee/xtb-api-unofficial-python/commit/d3570365bba7a5182086711b5dd18c710c7d4345))
+
+The library now resolves ws_url from XTB_ACCOUNT_TYPE env (real/demo) so the example no longer needs
+  to pass ws_url explicitly.
+
+- **examples**: Drop ws_url kwarg from live_quotes
+  ([`c3c6ba0`](https://github.com/liskeee/xtb-api-unofficial-python/commit/c3c6ba0000798069b6915e16dde3cdeb3d207630))
+
+Third example script was missed in Task D (spec §6 mentioned only basic_usage and grpc_trade). Same
+  pattern: library now reads XTB_ACCOUNT_TYPE directly, so hardcoded real-URL fallback is obsolete.
+
+- **examples**: Use XTB_ACCOUNT_TYPE=demo as grpc_trade safety gate
+  ([`b0ac007`](https://github.com/liskeee/xtb-api-unofficial-python/commit/b0ac00790adbe491c4bd9c38a8229114050363d9))
+
+Drop the hardcoded demo WebSocket URL hint and ws_url kwarg; recommend XTB_ACCOUNT_TYPE=demo
+  instead, matching the new env-driven mode.
+
+- **readme**: Add account_type to Constructor Parameters table
+  ([`c2b7bca`](https://github.com/liskeee/xtb-api-unofficial-python/commit/c2b7bca9b8fea2d4d87ff0e06b0f46bb54e3530e))
+
+The Constructor Parameters table still showed ws_url defaulting to "Real server" and account_server
+  defaulting to "XS-real1", with no mention of the new account_type kwarg. A reader scanning the
+  table would miss the primary switch and see two escape-hatch kwargs as the only knobs. Add
+  account_type and reword ws_url / account_server to point at the preset.
+
+- **readme**: Replace WebSocket URLs table with Demo vs Real section
+  ([`a783618`](https://github.com/liskeee/xtb-api-unofficial-python/commit/a78361866bc9953b023ca36a8d096258bc96af09))
+
+- **specs**: Design for env-driven demo vs real account mode
+  ([`fb10adb`](https://github.com/liskeee/xtb-api-unofficial-python/commit/fb10adb375a4d3c86891ca29e8312793041daf0a))
+
+Add design for XTB_ACCOUNT_TYPE env var and account_type kwarg that resolve ws_url + account_server
+  atomically from a preset table, so demo users no longer have to remember both overrides.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Features
+
+- **client**: Resolve ws_url and account_server from account_type
+  ([`c6231b8`](https://github.com/liskeee/xtb-api-unofficial-python/commit/c6231b8c92556ebad1f17fb8571ab53a182cad4c))
+
+Adds a new ``account_type`` kwarg ('real' | 'demo') to ``XTBClient.__init__`` and relaxes ``ws_url``
+  and ``account_server`` from hard-coded real-account defaults to optional ``None``. The three
+  values are now resolved via ``xtb_api.config`` (with env-var fallback for ``XTB_ACCOUNT_TYPE`` /
+  ``XTB_WS_URL`` / ``XTB_ACCOUNT_SERVER``) so users can pick demo by setting a single kwarg or env
+  var. Behavior is preserved for existing callers that pass nothing because
+  ``resolve_account_type(None)`` returns ``"real"`` and the resolvers then fill in the previous
+  ``wss://api5reala...`` / ``XS-real1`` defaults.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **config**: Add preset table for real/demo account types
+  ([`197c3e1`](https://github.com/liskeee/xtb-api-unofficial-python/commit/197c3e12c0b4a2022cc65eff00deec7c538853c7))
+
+Introduces `src/xtb_api/config.py` with the `AccountType` Literal and `PRESETS` table mapping each
+  account type to its WebSocket URL and `account_server` JWT claim. Subsequent commits add the three
+  pure resolver functions on top of this skeleton.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **config**: Resolve account_server from kwarg, env, or preset
+  ([`f357df9`](https://github.com/liskeee/xtb-api-unofficial-python/commit/f357df906af4f7e08cb728416da9645e31dea76e))
+
+Adds `resolve_account_server` mirroring the `resolve_ws_url` shape: explicit kwarg beats
+  `XTB_ACCOUNT_SERVER` env beats preset for the resolved account type. Keeps the per-field env as a
+  documented escape hatch for future `XS-real2`-style account-server migrations.
+
+Completes the three pure resolvers the spec calls for. `XTBClient` wiring (the kwarg rename +
+  construction-time resolution) lands in a later commit; this module is already unit-tested in
+  isolation.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **config**: Resolve account_type from kwarg and env
+  ([`47c3b8d`](https://github.com/liskeee/xtb-api-unofficial-python/commit/47c3b8d523db56367cd8ed601d3cd705d7ec3680))
+
+Adds `resolve_account_type` which picks the account type from the explicit kwarg, falls back to
+  `XTB_ACCOUNT_TYPE`, and defaults to `"real"` when neither is set. Validates against `PRESETS` so a
+  typo in either path raises `ValueError` rather than silently routing demo credentials at the live
+  endpoint.
+
+Covers the three happy-path cases (no kwarg/no env, explicit kwarg, env-only). Precedence,
+  normalization, and error cases follow in the next commit.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **config**: Resolve ws_url from kwarg, env, or preset
+  ([`5cabaa6`](https://github.com/liskeee/xtb-api-unofficial-python/commit/5cabaa66748021e33e4d21bd26cf56bbd80a6b83))
+
+Adds `resolve_ws_url` with the same three-tier precedence as the account-type resolver: explicit
+  kwarg beats `XTB_WS_URL` env beats preset for the resolved account type. Empty env is treated as
+  unset so users who export `XTB_WS_URL=""` in a shell still get the preset.
+
+Tests cover all four sources (kwarg, env, demo preset, real preset) plus the kwarg-beats-env
+  precedence case.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Refactoring
+
+- **config**: Address review feedback on demo-mode PR
+  ([`22e643e`](https://github.com/liskeee/xtb-api-unofficial-python/commit/22e643e51d97cafd0ee285d295273fda830705d5))
+
+- Replace `# type: ignore[return-value]` with `cast(AccountType, raw)` in `resolve_account_type` —
+  expresses the narrowing intent instead of suppressing a checker. - Add integration test for
+  precedence mix: `account_type="demo"` + explicit `ws_url=` resolves ws_url from kwarg but keeps
+  `account_server="XS-demo1"` from the demo preset. - `.env.example`: add `XTB_ACCOUNT_NUMBER=`
+  (what the example scripts actually read) alongside the existing `XTB_USER_ID=` alias. - README:
+  note `XTB_WS_URL` / `XTB_ACCOUNT_SERVER` as per-field escape hatches in the Demo vs Real section
+  so users who need them don't have to spelunk `.env.example` to discover them.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Testing
+
+- **config**: Cover account_type precedence, normalization, and typo errors
+  ([`4cf9c84`](https://github.com/liskeee/xtb-api-unofficial-python/commit/4cf9c84ee097d43038c4be14c3f4b15f29031234))
+
+Adds five more tests around `resolve_account_type`:
+
+- kwarg beats env var when both set, - `DEMO ` (upper + whitespace) normalizes to `demo`, - empty
+  `XTB_ACCOUNT_TYPE` is treated as unset, - `XTB_ACCOUNT_TYPE=bogus` raises `ValueError` naming the
+  value, - typo in the kwarg (`account_type="bogus"`) raises the same error.
+
+Pure resolver tests use `monkeypatch.setenv` / `.delenv` so they don't leak between cases. No
+  implementation change — these paths are already covered by the resolver added in the previous
+  commit.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- **config**: Integration coverage for XTBClient account_type wiring
+  ([`9fc4e84`](https://github.com/liskeee/xtb-api-unofficial-python/commit/9fc4e84781181fdefef350c5d8ecf5797bc4a17e))
+
+Add TestXTBClientIntegration with three tests that construct an XTBClient and assert the resolved
+  account_server and ws url are wired through to client._account_server and client._ws._config.url.
+  Covers spec section 8 cases 13-14: construction-time wiring of resolved values for demo via kwarg
+  and via XTB_ACCOUNT_TYPE env, plus the real default when nothing is set. No network access;
+  offline and fast.
 
 
 ## v0.7.2 (2026-04-21)
