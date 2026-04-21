@@ -34,6 +34,12 @@ def describe(result: TradeResult) -> str:
     match result.status:
         case TradeOutcome.FILLED:
             return f"FILLED  order={result.order_id} price={result.price}"
+        case TradeOutcome.QUEUED:
+            return (
+                f"QUEUED  order={result.order_id}  order_number={result.order_number}"
+                f"  — market closed; order will fill when market opens. "
+                f"Cancel with: await client.cancel_order({result.order_number})"
+            )
         case TradeOutcome.REJECTED:
             return f"REJECTED  code={result.error_code}  error={result.error!r}"
         case TradeOutcome.AMBIGUOUS:
