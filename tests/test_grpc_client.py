@@ -439,3 +439,130 @@ class TestParseTradeResponseExtractsOrderNumber:
         assert result.order_id == "a4c205ea-84c0-45aa-b0e0-34ef7ce060fe"
         assert result.order_number == 872077045
         assert result.grpc_status == 0
+
+
+class TestCancelOrders:
+    """GrpcClient.cancel_orders wraps DeleteOrders gRPC."""
+
+    def _success_response(self, cancellation_uuid: str, order_number: int) -> bytes:
+        """Build a DeleteOrders success response (data frame + grpc-status:0 trailer)."""
+        import base64
+        import struct
+
+        from xtb_api.grpc.proto import (
+            build_grpc_frame,
+            encode_field_bytes,
+            encode_field_varint,
+        )
+
+        inner = encode_field_varint(1, order_number)
+        data_msg = (
+            encode_field_bytes(1, cancellation_uuid.encode("utf-8"))
+            + encode_field_bytes(2, inner)
+        )
+        data_frame = build_grpc_frame(data_msg)
+        trailer = b"grpc-status:0\r\n"
+        trailer_frame = struct.pack(">BI", 0x80, len(trailer)) + trailer
+        return base64.b64encode(data_frame + trailer_frame).decode("ascii")
+
+    @pytest.mark.asyncio
+    async def test_cancel_single_order_happy_path(
+        self, monkeypatch: pytest.MonkeyPatch, httpx_mock
+    ) -> None:
+        from xtb_api.grpc.client import GrpcClient
+        from xtb_api.grpc.proto import GRPC_DELETE_ORDERS_ENDPOINT
+
+        client = GrpcClient(account_number="1")
+
+        # Short-circuit JWT acquisition
+        async def _fake_jwt() -> str:
+            return "FAKE.JWT.TOKEN"
+
+        monkeypatch.setattr(client, "_ensure_jwt", _fake_jwt)
+
+        httpx_mock.add_response(
+            method="POST",
+            url=GRPC_DELETE_ORDERS_ENDPOINT,
+            text=self._success_response("9e5b4600-2ecb-4e4b-a92c-e465367a80f9", 872077045),
+        )
+
+        results = await client.cancel_orders([872077045])
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.success is True
+        assert r.order_number == 872077045
+        assert r.cancellation_id == "9e5b4600-2ecb-4e4b-a92c-e465367a80f9"
+        assert r.grpc_status == 0
+
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_cancel_non_zero_grpc_status_marks_failure(
+        self, monkeypatch: pytest.MonkeyPatch, httpx_mock
+    ) -> None:
+        import base64
+        import struct
+
+        from xtb_api.grpc.client import GrpcClient
+        from xtb_api.grpc.proto import GRPC_DELETE_ORDERS_ENDPOINT, build_grpc_frame
+
+        client = GrpcClient(account_number="1")
+
+        async def _fake_jwt() -> str:
+            return "FAKE.JWT.TOKEN"
+
+        monkeypatch.setattr(client, "_ensure_jwt", _fake_jwt)
+
+        # Empty data frame + non-zero grpc-status trailer
+        data_frame = build_grpc_frame(b"")
+        trailer = b"grpc-status:5\r\ngrpc-message:order not found\r\n"
+        trailer_frame = struct.pack(">BI", 0x80, len(trailer)) + trailer
+        body = base64.b64encode(data_frame + trailer_frame).decode("ascii")
+
+        httpx_mock.add_response(
+            method="POST",
+            url=GRPC_DELETE_ORDERS_ENDPOINT,
+            text=body,
+        )
+
+        results = await client.cancel_orders([42])
+        assert len(results) == 1
+        r = results[0]
+        assert r.success is False
+        assert r.grpc_status == 5
+        assert r.order_number == 42
+        assert r.error is not None and "order not found" in r.error
+
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_cancel_network_error_returns_failure_with_error(
+        self, monkeypatch: pytest.MonkeyPatch, httpx_mock
+    ) -> None:
+        import httpx
+
+        from xtb_api.grpc.client import GrpcClient
+        from xtb_api.grpc.proto import GRPC_DELETE_ORDERS_ENDPOINT
+
+        client = GrpcClient(account_number="1")
+
+        async def _fake_jwt() -> str:
+            return "FAKE.JWT.TOKEN"
+
+        monkeypatch.setattr(client, "_ensure_jwt", _fake_jwt)
+
+        httpx_mock.add_exception(
+            httpx.ConnectError("boom"),
+            method="POST",
+            url=GRPC_DELETE_ORDERS_ENDPOINT,
+        )
+
+        results = await client.cancel_orders([42])
+        assert len(results) == 1
+        r = results[0]
+        assert r.success is False
+        assert r.order_number == 42
+        assert r.error is not None and "boom" in r.error
+
+        await client.disconnect()
