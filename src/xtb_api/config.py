@@ -29,3 +29,22 @@ PRESETS: dict[AccountType, _Preset] = {
         "account_server": "XS-demo1",
     },
 }
+
+
+def resolve_account_type(explicit: AccountType | None) -> AccountType:
+    """Resolve account type from explicit kwarg → env → default 'real'.
+
+    Validates both the kwarg and the env var against PRESETS so a typo
+    in either path raises ValueError instead of silently falling through.
+    """
+    if explicit is not None:
+        raw = str(explicit).strip().lower()
+    else:
+        raw = os.environ.get("XTB_ACCOUNT_TYPE", "").strip().lower()
+    if not raw:
+        return "real"
+    if raw not in PRESETS:
+        raise ValueError(
+            f"Unknown account_type {raw!r}. Expected 'real' or 'demo'."
+        )
+    return raw  # type: ignore[return-value]
