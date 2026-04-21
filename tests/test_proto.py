@@ -257,3 +257,73 @@ class TestBuildDeleteOrdersRequest:
         # field 1 with length 0 is still valid protobuf
         msg = build_delete_orders_request([])
         assert msg == bytes.fromhex("0a00")
+
+
+class TestParseNewMarketOrderResponse:
+    """Parse the (UUID, order_number) response shape used by NewMarketOrder
+    and DeleteOrders. Reference bytes reconstructed from demo_market_closed.har.
+    """
+
+    def _build_response(self, uuid_str: str, order_number: int, trailing: bytes = b"") -> bytes:
+        """Reconstruct a response frame: field1=UUID bytes, field2={field1=order_number varint, trailing}."""
+        from xtb_api.grpc.proto import encode_field_bytes, encode_field_varint
+
+        inner = encode_field_varint(1, order_number) + trailing
+        return encode_field_bytes(1, uuid_str.encode("utf-8")) + encode_field_bytes(2, inner)
+
+    def test_extracts_uuid_and_order_number(self):
+        from xtb_api.grpc.proto import parse_new_market_order_response
+
+        # Shape of demo_market_closed.har entry 1 (NewMarketOrder response, 46B)
+        payload = self._build_response("a4c205ea-84c0-45aa-b0e0-34ef7ce060fe", 872077045)
+        assert len(payload) == 46
+
+        order_id, order_number = parse_new_market_order_response(payload)
+        assert order_id == "a4c205ea-84c0-45aa-b0e0-34ef7ce060fe"
+        assert order_number == 872077045
+
+    def test_empty_payload_returns_none_tuple(self):
+        from xtb_api.grpc.proto import parse_new_market_order_response
+
+        assert parse_new_market_order_response(b"") == (None, None)
+
+    def test_uuid_only_no_order_number(self):
+        from xtb_api.grpc.proto import encode_field_bytes, parse_new_market_order_response
+
+        payload = encode_field_bytes(1, b"deadbeef-dead-beef-dead-beefdeadbeef")
+        order_id, order_number = parse_new_market_order_response(payload)
+        assert order_id == "deadbeef-dead-beef-dead-beefdeadbeef"
+        assert order_number is None
+
+    def test_falls_back_to_regex_when_field1_is_not_utf8(self):
+        from xtb_api.grpc.proto import encode_field_bytes, parse_new_market_order_response
+
+        # Simulate a future wire change where the UUID is nested deeper — the
+        # parser must still find it via a regex sweep so we don't silently
+        # regress against captures where field 1 shape changes.
+        hidden = b"\xff\xfe" + b"a4c205ea-84c0-45aa-b0e0-34ef7ce060fe".ljust(40, b"\x00")
+        payload = encode_field_bytes(99, hidden)
+        order_id, _ = parse_new_market_order_response(payload)
+        assert order_id == "a4c205ea-84c0-45aa-b0e0-34ef7ce060fe"
+
+
+class TestParseDeleteOrdersResponse:
+    """DeleteOrders response shape matches NewMarketOrder — same helper."""
+
+    def test_extracts_cancellation_uuid_and_order_number(self):
+        from xtb_api.grpc.proto import (
+            encode_field_bytes,
+            encode_field_varint,
+            parse_delete_orders_response,
+        )
+
+        # Shape of demo_market_closed.har entry 3 (DeleteOrders response, 48B).
+        # Nested field 2 carries order_number plus an empty field 2 bytes — reproduce
+        # the trailing "12 00" seen in the capture.
+        inner = encode_field_varint(1, 872077045) + encode_field_bytes(2, b"")
+        payload = encode_field_bytes(1, b"9e5b4600-2ecb-4e4b-a92c-e465367a80f9") + encode_field_bytes(2, inner)
+        assert len(payload) == 48
+
+        cancellation_id, order_number = parse_delete_orders_response(payload)
+        assert cancellation_id == "9e5b4600-2ecb-4e4b-a92c-e465367a80f9"
+        assert order_number == 872077045

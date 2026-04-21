@@ -228,6 +228,74 @@ def extract_jwt(data: bytes) -> str | None:
     return match.group(0) if match else None
 
 
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+
+
+def _parse_uuid_and_order_number(payload: bytes) -> tuple[str | None, int | None]:
+    """Shared parser for the (UUID, order_number) response shape.
+
+    Used by both NewMarketOrder and DeleteOrders responses:
+
+        { field 1: UUID string,
+          field 2: { field 1: uint64 order_number, ... } }
+
+    Field 1 is parsed as UTF-8 first; if it doesn't decode cleanly the
+    helper falls back to a UUID regex sweep over the entire payload so
+    wire-shape drift doesn't silently lose the order_id.
+    """
+    if not payload:
+        return None, None
+
+    fields = parse_proto_fields(payload)
+    order_id: str | None = None
+    order_number: int | None = None
+
+    field1 = fields.get(1)
+    if field1:
+        _, raw = field1[0]
+        if isinstance(raw, bytes):
+            try:
+                candidate = raw.decode("utf-8")
+                # Accept it as the order_id regardless of format — XTB has used
+                # UUIDs consistently so far, but the parser shouldn't reject
+                # valid strings just because they don't match a pattern.
+                order_id = candidate
+            except UnicodeDecodeError:
+                order_id = None
+
+    field2 = fields.get(2)
+    if field2:
+        _, nested = field2[0]
+        if isinstance(nested, bytes):
+            inner = parse_proto_fields(nested)
+            inner1 = inner.get(1)
+            if inner1:
+                _, v = inner1[0]
+                if isinstance(v, int):
+                    order_number = v
+
+    # Regex fallback: if we failed to pull order_id from field 1 (wire drift),
+    # scan the raw bytes for a UUID.
+    if order_id is None:
+        match = _UUID_RE.search(payload.decode("latin-1"))
+        if match:
+            order_id = match.group(0)
+
+    return order_id, order_number
+
+
+def parse_new_market_order_response(payload: bytes) -> tuple[str | None, int | None]:
+    """Parse a NewMarketOrder data-frame payload to ``(order_id, order_number)``."""
+    return _parse_uuid_and_order_number(payload)
+
+
+def parse_delete_orders_response(payload: bytes) -> tuple[str | None, int | None]:
+    """Parse a DeleteOrders data-frame payload to ``(cancellation_id, order_number)``."""
+    return _parse_uuid_and_order_number(payload)
+
+
 # Side constants for gRPC protocol.
 # WARNING: These differ from WebSocket Xs6Side enum (BUY=0, SELL=1).
 # Do NOT interchange with Xs6Side values — wrong side will be sent.
