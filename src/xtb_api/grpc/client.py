@@ -14,7 +14,6 @@ from __future__ import annotations
 import base64
 import contextlib
 import logging
-import re
 import time
 from typing import TYPE_CHECKING
 
@@ -29,14 +28,18 @@ from xtb_api.exceptions import (
 )
 from xtb_api.grpc.proto import (
     GRPC_AUTH_ENDPOINT,
+    GRPC_DELETE_ORDERS_ENDPOINT,
     GRPC_NEW_ORDER_ENDPOINT,
     GRPC_WEB_TEXT_CONTENT_TYPE,
     SIDE_BUY,
     SIDE_SELL,
     build_create_access_token_request,
+    build_delete_orders_request,
     build_grpc_web_text_body,
     build_new_market_order,
     extract_jwt,
+    parse_delete_orders_response,
+    parse_new_market_order_response,
 )
 from xtb_api.grpc.types import GrpcTradeResult
 
@@ -311,14 +314,14 @@ class GrpcClient:
 
         # Success requires explicit grpc-status 0 from trailer
         if grpc_status == 0:
-            response_text = data_payload.decode("latin-1", errors="replace")
-            uuid_match = re.search(
-                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-                response_text,
-            )
-            order_id = uuid_match.group(0) if uuid_match else None
+            order_id, order_number = parse_new_market_order_response(data_payload)
             logger.info("Trade executed successfully via gRPC")
-            return GrpcTradeResult(success=True, order_id=order_id, grpc_status=0)
+            return GrpcTradeResult(
+                success=True,
+                order_id=order_id,
+                order_number=order_number,
+                grpc_status=0,
+            )
 
         # Error cases
         status = grpc_status if grpc_status is not None else 0

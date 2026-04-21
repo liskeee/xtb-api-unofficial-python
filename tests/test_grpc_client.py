@@ -401,3 +401,41 @@ class TestGrpcEmptyResponseSemantics:
         with pytest.raises(Exception) as exc_info:
             await client.get_jwt("TGT-test")
         assert not isinstance(exc_info.value, AmbiguousOutcomeError)
+
+
+class TestParseTradeResponseExtractsOrderNumber:
+    """Regression guard: successful NewMarketOrder responses must populate
+    both order_id (UUID) and order_number (uint64) on the GrpcTradeResult.
+
+    Fixture bytes reconstructed from demo_market_closed.har entry 1.
+    """
+
+    def _success_response_frame(self) -> bytes:
+        from xtb_api.grpc.proto import (
+            build_grpc_frame,
+            encode_field_bytes,
+            encode_field_varint,
+        )
+
+        uuid_str = "a4c205ea-84c0-45aa-b0e0-34ef7ce060fe"
+        inner = encode_field_varint(1, 872077045)
+        data_msg = encode_field_bytes(1, uuid_str.encode("utf-8")) + encode_field_bytes(2, inner)
+        data_frame = build_grpc_frame(data_msg)
+
+        # Trailer frame: flag 0x80 + length + "grpc-status:0\r\n"
+        trailer = b"grpc-status:0\r\n"
+        import struct
+
+        trailer_frame = struct.pack(">BI", 0x80, len(trailer)) + trailer
+        return data_frame + trailer_frame
+
+    def test_populates_order_id_and_order_number(self):
+        from xtb_api.grpc.client import GrpcClient
+
+        client = GrpcClient(account_number="1")
+        result = client._parse_trade_response(self._success_response_frame())
+
+        assert result.success is True
+        assert result.order_id == "a4c205ea-84c0-45aa-b0e0-34ef7ce060fe"
+        assert result.order_number == 872077045
+        assert result.grpc_status == 0
