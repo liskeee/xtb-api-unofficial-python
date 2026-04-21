@@ -8,7 +8,7 @@ from xtb_api.client import XTBClient, _decimal_places
 from xtb_api.grpc.proto import SIDE_BUY, SIDE_SELL
 from xtb_api.grpc.types import GrpcTradeResult
 from xtb_api.types.instrument import InstrumentSearchResult
-from xtb_api.types.trading import TradeOptions
+from xtb_api.types.trading import Position, TradeOptions
 
 
 class TestXTBClientInit:
@@ -265,6 +265,7 @@ class TestXTBClientTrade:
         mock_instrument.symbol_key = "9_CIG.PL_6"
         client._ws.search_instrument = AsyncMock(return_value=[mock_instrument])
         client._ws.get_positions = AsyncMock(return_value=[])
+        client._ws.get_orders = AsyncMock(return_value=[])
         return client
 
     @pytest.mark.asyncio
@@ -272,6 +273,8 @@ class TestXTBClientTrade:
         client = self._make_client()
         grpc = client._ensure_grpc()
         grpc.execute_order = AsyncMock(return_value=GrpcTradeResult(success=True, order_id="uuid-123"))
+        pos = Position(symbol="CIG.PL", volume=19, side="buy", order_id="uuid-123", open_price=1.0, current_price=1.0)
+        client._ws.get_positions = AsyncMock(return_value=[pos])
 
         result = await client.buy("CIG.PL", volume=19)
 
@@ -288,6 +291,8 @@ class TestXTBClientTrade:
         client = self._make_client()
         grpc = client._ensure_grpc()
         grpc.execute_order = AsyncMock(return_value=GrpcTradeResult(success=True, order_id="uuid-456"))
+        pos = Position(symbol="CIG.PL", volume=10, side="sell", order_id="uuid-456", open_price=1.0, current_price=1.0)
+        client._ws.get_positions = AsyncMock(return_value=[pos])
 
         result = await client.sell("CIG.PL", volume=10)
 
@@ -337,7 +342,9 @@ class TestXTBClientTrade:
         )
         grpc.invalidate_jwt = MagicMock()
         # Idempotency probe sees no matching position → retry proceeds.
-        client._ws.get_positions = AsyncMock(return_value=[])
+        # After retry, classification probe finds the new position.
+        new_pos = Position(symbol="CIG.PL", volume=19, side="buy", order_id="uuid-retry", open_price=1.0, current_price=1.0)
+        client._ws.get_positions = AsyncMock(side_effect=[[], [new_pos], [new_pos]])
 
         result = await client.buy("CIG.PL", volume=19)
 

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from xtb_api.client import XTBClient
-from xtb_api.types.trading import TradeOutcome, TradeResult
+from xtb_api.types.trading import Position, TradeOutcome, TradeResult
 
 
 @pytest.fixture
@@ -22,9 +22,11 @@ def client(monkeypatch: pytest.MonkeyPatch) -> XTBClient:
     c._auth = MagicMock()
     c._ws = MagicMock()
     c._ws.search_instrument = AsyncMock(return_value=[])  # unused when rejected early
+    c._ws.get_orders = AsyncMock(return_value=[])
     fake_grpc = MagicMock()
     fake_grpc.execute_order = AsyncMock()
     monkeypatch.setattr(c, "_ensure_grpc", lambda: fake_grpc)
+    monkeypatch.setattr("xtb_api.client.asyncio.sleep", AsyncMock(return_value=None))
     c._fake_grpc = fake_grpc  # type: ignore[attr-defined]
     return c
 
@@ -69,8 +71,8 @@ async def test_buy_accepts_volume_one(client: XTBClient, monkeypatch: pytest.Mon
     client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
         return_value=MagicMock(success=True, order_id="O1", error=None)
     )
-    # Also stub get_positions to avoid triggering the fill-price poll (added in later task).
-    client._ws.get_positions = AsyncMock(return_value=[])
+    pos = Position(symbol="CIG.PL", volume=1, side="buy", order_id="O1", open_price=1.0, current_price=1.0)
+    client._ws.get_positions = AsyncMock(return_value=[pos])
 
     result = await client.buy("CIG.PL", volume=1)
     assert result.success is True
@@ -97,5 +99,6 @@ async def test_buy_accepts_fractional_at_half(client: XTBClient, monkeypatch: py
     client._ws.get_positions = AsyncMock(return_value=[])
 
     result = await client.buy("CIG.PL", volume=0.5)  # type: ignore[arg-type]
-    assert result.success is True
+    # volume=0.5 rounds to 1 — validation passes and gRPC is called (not rejected early).
+    assert result.status is not TradeOutcome.INSUFFICIENT_VOLUME
     client._fake_grpc.execute_order.assert_awaited()  # type: ignore[attr-defined]

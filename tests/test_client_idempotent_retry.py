@@ -14,11 +14,13 @@ def _make_client(monkeypatch: pytest.MonkeyPatch) -> XTBClient:
     c = XTBClient(email="x@y.z", password="p", account_number=1, session_file=None)
     c._auth = MagicMock()
     c._ws = MagicMock()
+    c._ws.get_orders = AsyncMock(return_value=[])
     fake_grpc = MagicMock()
     fake_grpc.execute_order = AsyncMock()
     fake_grpc.invalidate_jwt = MagicMock()
     monkeypatch.setattr(c, "_ensure_grpc", lambda: fake_grpc)
     monkeypatch.setattr(c, "_resolve_instrument_id", AsyncMock(return_value=42))
+    monkeypatch.setattr("xtb_api.client.asyncio.sleep", AsyncMock(return_value=None))
     c._fake_grpc = fake_grpc  # type: ignore[attr-defined]
     return c
 
@@ -79,8 +81,9 @@ async def test_rbac_retry_proceeds_when_no_matching_position(
     client._fake_grpc.execute_order = AsyncMock(  # type: ignore[attr-defined]
         side_effect=[rbac_result, retry_result]
     )
-    # No positions exist yet — probe comes back empty.
-    client._ws.get_positions = AsyncMock(return_value=[])
+    # Idempotency probe: no existing position. After retry succeeds, position appears.
+    new_pos = _pos("CIG.PL", 5, "buy", "NEW-OK")
+    client._ws.get_positions = AsyncMock(side_effect=[[], [new_pos], [new_pos]])
 
     result = await client.buy("CIG.PL", volume=5)
 
@@ -108,9 +111,13 @@ async def test_rbac_retry_position_wrong_side_does_not_match(
         side_effect=[rbac_result, retry_result]
     )
 
-    # An UNRELATED short position — wrong side, must not match.
+    # Idempotency probe sees only the wrong-side position → no match → retry proceeds.
+    # After retry, classification probe sees the new buy position too.
     other_side = _pos("CIG.PL", 5, "sell", "OTHER")
-    client._ws.get_positions = AsyncMock(return_value=[other_side])
+    new_buy = _pos("CIG.PL", 5, "buy", "NEW")
+    client._ws.get_positions = AsyncMock(
+        side_effect=[[other_side], [other_side, new_buy], [other_side, new_buy]]
+    )
 
     result = await client.buy("CIG.PL", volume=5)
 
