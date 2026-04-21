@@ -343,7 +343,14 @@ class TestXTBClientTrade:
         grpc.invalidate_jwt = MagicMock()
         # Idempotency probe sees no matching position → retry proceeds.
         # After retry, classification probe finds the new position.
-        new_pos = Position(symbol="CIG.PL", volume=19, side="buy", order_id="uuid-retry", open_price=1.0, current_price=1.0)
+        new_pos = Position(
+            symbol="CIG.PL",
+            volume=19,
+            side="buy",
+            order_id="uuid-retry",
+            open_price=1.0,
+            current_price=1.0,
+        )
         client._ws.get_positions = AsyncMock(side_effect=[[], [new_pos], [new_pos]])
 
         result = await client.buy("CIG.PL", volume=19)
